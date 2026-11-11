@@ -50,12 +50,12 @@
             background: #3498db;
             color: white;
             border: none;
-            padding: 12px;
+            padding: 10px;
             width: 100%;
             border-radius: 8px;
-            font-size: 16px;
+            font-size: 15px;
             font-weight: bold;
-            margin-top: 8px;
+            margin-top: 6px;
             cursor: pointer;
             text-align: center;
         }
@@ -71,7 +71,6 @@
         .submit-btn { background: #27ae60; }
         .transfer-btn { background: #8e44ad; margin-top: 5px; }
         
-        /* 清單內按鈕樣式調整 */
         .action-btns { display: flex; gap: 5px; margin-top: 5px; }
         .out-btn { background: #e67e22; padding: 5px 10px; font-size: 12px; margin-top: 0; width: auto; }
         .delete-btn { background: #e74c3c; padding: 5px 10px; font-size: 12px; margin-top: 0; width: auto; }
@@ -94,17 +93,18 @@
     <!-- 登入與創建使用者彈跳視窗 -->
     <div id="loginModal">
         <div class="login-card">
-            <h2>👤 選擇或建立使用者</h2>
-            <label>點擊下列現有使用者直接登入:</label>
-            <div id="userListContainer" style="margin-top: 8px;"></div>
+            <h2>👤 選擇帳號或新增使用者</h2>
             
-            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+            <label>1. 點擊現有帳號快速登入:</label>
+            <div id="userListContainer" style="margin-top: 5px; max-height: 150px; overflow-y: auto;"></div>
             
-            <label>建立新使用者名稱:</label>
-            <input type="text" id="newUsernameInput" placeholder="例如: 媽媽">
-            <label>設定密碼:</label>
-            <input type="password" id="newPasswordInput" placeholder="設定登入密碼">
-            <button type="button" onclick="createNewUser()" class="add-btn">➕ 建立新使用者並登入</button>
+            <hr style="margin: 15px 0; border: 0; border-top: 1px solid #ddd;">
+            
+            <label>2. 或是直接新增全新使用者:</label>
+            <input type="text" id="newUsernameInput" placeholder="輸入新使用者名稱 (例如: 媽媽)">
+            <label style="margin-top: 8px;">設定密碼:</label>
+            <input type="password" id="newPasswordInput" placeholder="輸入登入密碼">
+            <button type="button" onclick="createNewUser()" class="add-btn" style="background: #27ae60; margin-top: 10px;">➕ 註冊新帳號並登入</button>
         </div>
     </div>
 
@@ -224,7 +224,7 @@
             let btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'user-btn-item';
-            btn.textContent = `👤 登入: ${u}`;
+            btn.textContent = `👤 快速登入: ${u}`;
             btn.onclick = function() {
                 let pwd = prompt(`請輸入「${u}」的密碼:`);
                 if (pwd === null) return;
@@ -245,12 +245,12 @@
         let name = document.getElementById('newUsernameInput').value.trim();
         let password = document.getElementById('newPasswordInput').value;
         
-        if (!name) { alert("請輸入使用者名稱"); return; }
+        if (!name) { alert("請輸入新使用者名稱"); return; }
         if (!password) { alert("請設定密碼"); return; }
         
         let usersObj = JSON.parse(localStorage.getItem('app_users_secure')) || {};
         if (usersObj[name]) {
-            let directLogin = confirm(`此使用者名稱「${name}」已存在！要直接輸入密碼登入嗎？`);
+            let directLogin = confirm(`此使用者名稱「${name}」已經存在！要直接輸入密碼登入嗎？`);
             if (directLogin) {
                 let pwd = prompt(`請輸入「${name}」的密碼:`);
                 if (usersObj[name] === pwd) {
@@ -271,7 +271,7 @@
         
         setCurrentUser(name);
         document.getElementById('loginModal').style.display = 'none';
-        alert(`✨ 成功建立並登入使用者: ${name}`);
+        alert(`✨ 成功註冊並登入使用者: ${name}`);
     }
 
     function setCurrentUser(username) {
@@ -438,7 +438,6 @@
         renderInventory();
     }
 
-    // ➖ 物品出庫（減少數量或扣除）
     function outItem(id) {
         let key = `items_${currentUser}`;
         let items = JSON.parse(localStorage.getItem(key)) || [];
@@ -455,7 +454,7 @@
         }
 
         if (outQty >= item.qty) {
-            if (confirm(`出庫數量大於或等於現有庫存，是否直接將此物品從清單中移除（用完/全數出庫）？`)) {
+            if (confirm(`出庫數量大於或等於現有庫存，是否直接將此物品從清單中移除？`)) {
                 items = items.filter(i => i.id !== id);
             } else {
                 return;

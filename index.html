@@ -21,7 +21,7 @@
         .user-bar span { font-weight: bold; color: #2980b9; }
         .switch-user-btn { background: #e74c3c; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; margin-top: 0; width: auto; }
 
-        /* 登入遮罩畫面 (改進版，絕對可點擊) */
+        /* 登入遮罩畫面 */
         #loginModal { 
             position: fixed; 
             top: 0; 
@@ -75,7 +75,6 @@
         #reader { width: 100%; margin-top: 10px; }
         #preview { width: 100%; max-height: 200px; object-fit: contain; margin-top: 10px; display: none; border-radius: 6px; }
         
-        /* 頁籤與庫存清單樣式 */
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
         .tab-btn { flex: 1; padding: 10px; background: #bdc3c7; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; margin-top: 0; }
         .tab-btn.active { background: #2c3e50; }
@@ -88,7 +87,7 @@
 </head>
 <body>
 
-    <!-- 登入與創建使用者彈跳視窗（全面改用點擊按鈕，解決手機點不到的問題） -->
+    <!-- 登入與創建使用者彈跳視窗 -->
     <div id="loginModal">
         <div class="login-card">
             <h2>👤 選擇或建立使用者</h2>
@@ -108,19 +107,16 @@
 <div class="container">
     <h1>📦 智慧儲存庫與食品管理</h1>
 
-    <!-- 使用者狀態列 -->
     <div class="user-bar">
         <div>當前使用者: <span id="currentUserNameDisplay">載入中...</span></div>
         <button class="switch-user-btn" onclick="showLoginModal()">切換 / 新增使用者</button>
     </div>
 
-    <!-- 頁籤切換 -->
     <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('formTab', this)">📝 物品入庫</button>
         <button class="tab-btn" onclick="switchTab('listTab', this)">📋 現有庫存清單</button>
     </div>
 
-    <!-- 頁籤一：物品入庫表單 -->
     <div id="formTab" class="tab-content active">
         <form id="itemForm" onsubmit="saveItem(event)">
             <div class="card">
@@ -132,7 +128,6 @@
                 <input type="text" id="newStorageName" placeholder="例如: 💊 藥品急救箱">
                 <button type="button" class="add-btn" onclick="addNewStorage()">➕ 建立新儲存庫</button>
 
-                <!-- 倉庫轉移專區 -->
                 <hr style="margin: 15px 0; border: 0; border-top: 1px dashed #ccc;">
                 <label>🔄 將「整個倉庫」的物品轉移到其他倉庫:</label>
                 <div style="display: flex; gap: 5px; margin-top: 5px;">
@@ -175,7 +170,6 @@
         </form>
     </div>
 
-    <!-- 頁籤二：現有庫存清單 -->
     <div id="listTab" class="tab-content">
         <div class="card">
             <h3>📋 目前所有庫存與食品期限</h3>
@@ -203,7 +197,6 @@
         } catch(e) { console.log("AI 載入失敗"); }
     };
 
-    // 初始化使用者系統
     function initAppUsers() {
         let users = JSON.parse(localStorage.getItem('app_users_secure')) || { "預設使用者": "1234" };
         localStorage.setItem('app_users_secure', JSON.stringify(users));
@@ -216,7 +209,6 @@
         }
     }
 
-    // 顯示登入選單（改用動態生成按鈕）
     function showLoginModal() {
         let usersObj = JSON.parse(localStorage.getItem('app_users_secure')) || {};
         let container = document.getElementById('userListContainer');
@@ -229,7 +221,7 @@
             btn.textContent = `👤 登入: ${u}`;
             btn.onclick = function() {
                 let pwd = prompt(`請輸入「${u}」的密碼:`);
-                if (pwd === null) return; // 取消
+                if (pwd === null) return;
                 if (usersObj[u] === pwd) {
                     setCurrentUser(u);
                     document.getElementById('loginModal').style.display = 'none';
@@ -243,7 +235,6 @@
         document.getElementById('loginModal').style.display = 'flex';
     }
 
-    // 創建新使用者與密碼
     function createNewUser() {
         let name = document.getElementById('newUsernameInput').value.trim();
         let password = document.getElementById('newPasswordInput').value;
@@ -253,7 +244,16 @@
         
         let usersObj = JSON.parse(localStorage.getItem('app_users_secure')) || {};
         if (usersObj[name]) {
-            alert("此使用者名稱已存在！");
+            let directLogin = confirm(`此使用者名稱「${name}」已存在！要直接輸入密碼登入嗎？`);
+            if (directLogin) {
+                let pwd = prompt(`請輸入「${name}」的密碼:`);
+                if (usersObj[name] === pwd) {
+                    setCurrentUser(name);
+                    document.getElementById('loginModal').style.display = 'none';
+                } else {
+                    alert("❌ 密碼錯誤！");
+                }
+            }
             return;
         }
 
@@ -268,7 +268,6 @@
         alert(`✨ 成功建立並登入使用者: ${name}`);
     }
 
-    // 設定當前使用者
     function setCurrentUser(username) {
         currentUser = username;
         localStorage.setItem('current_user', username);
@@ -298,7 +297,6 @@
         }
     }
 
-    // 切換頁籤
     function switchTab(tabId, btn) {
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -307,7 +305,6 @@
         if(tabId === 'listTab') renderInventory();
     }
 
-    // 載入儲存庫下拉選單（包含轉移選單）
     function loadStorages() {
         let storages = JSON.parse(localStorage.getItem(`storages_${currentUser}`)) || defaultStorages;
         let select = document.getElementById('storageSelect');
@@ -329,7 +326,6 @@
         });
     }
 
-    // 新增自訂儲存庫
     function addNewStorage() {
         let name = document.getElementById('newStorageName').value.trim();
         if (!name) { alert("請輸入名稱"); return; }
@@ -344,7 +340,6 @@
         alert("✨ 建立成功！");
     }
 
-    // 🔄 將某個倉庫的所有物品轉移到另一個倉庫
     function transferWholeStorage() {
         let sourceStorageId = document.getElementById('storageSelect').value;
         let targetStorageId = document.getElementById('targetTransferStorage').value;
@@ -376,7 +371,6 @@
         renderInventory();
     }
 
-    // 啟動條碼掃描
     function startScanner() {
         const scanner = new Html5Qrcode("reader");
         scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 200 }, (text) => {
@@ -386,7 +380,6 @@
         }).catch(err => alert("相機啟動失敗"));
     }
 
-    // 預覽圖片
     function previewImage(event) {
         const file = event.target.files[0];
         if (file) {
@@ -401,7 +394,6 @@
         }
     }
 
-    // 執行手機本地 AI 分析
     async function runMobileAI() {
         let img = document.getElementById('preview');
         if (!img.src || img.style.display === 'none') { alert("請先拍照！"); return; }
@@ -414,7 +406,6 @@
         }
     }
 
-    // 儲存物品
     function saveItem(event) {
         event.preventDefault();
         let key = `items_${currentUser}`;
@@ -441,7 +432,6 @@
         renderInventory();
     }
 
-    // 渲染庫存清單
     function renderInventory() {
         let items = JSON.parse(localStorage.getItem(`items_${currentUser}`)) || [];
         let storages = JSON.parse(localStorage.getItem(`storages_${currentUser}`)) || defaultStorages;
@@ -466,13 +456,12 @@
                     📍 位置: ${storageName} ${item.location ? '/ ' + item.location : ''}<br>
                     ⏳ 有效期限: ${item.expiryDate || '無'}
                 </div>
-                <button class="delete-btn" onclick="deleteItem(${item.id})">刪除室</button>
+                <button class="delete-btn" onclick="deleteItem(${item.id})">刪除</button>
             `;
             container.appendChild(div);
         });
     }
 
-    // 刪除庫存項目
     function deleteItem(id) {
         if (!confirm("確定要刪除此筆記錄嗎？")) return;
         let key = `items_${currentUser}`;

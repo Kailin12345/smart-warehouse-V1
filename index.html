@@ -46,7 +46,6 @@
         }
         .login-card h2 { margin-top: 0; font-size: 18px; color: #2c3e50; text-align: center; }
         
-        /* 使用者快速選擇按鈕樣式 */
         .user-btn-item {
             background: #3498db;
             color: white;
@@ -71,7 +70,12 @@
         .add-btn { background: #2980b9; margin-top: 5px; }
         .submit-btn { background: #27ae60; }
         .transfer-btn { background: #8e44ad; margin-top: 5px; }
-        .delete-btn { background: #e74c3c; padding: 6px 12px; font-size: 12px; margin-top: 5px; width: auto; }
+        
+        /* 清單內按鈕樣式調整 */
+        .action-btns { display: flex; gap: 5px; margin-top: 5px; }
+        .out-btn { background: #e67e22; padding: 5px 10px; font-size: 12px; margin-top: 0; width: auto; }
+        .delete-btn { background: #e74c3c; padding: 5px 10px; font-size: 12px; margin-top: 0; width: auto; }
+
         #reader { width: 100%; margin-top: 10px; }
         #preview { width: 100%; max-height: 200px; object-fit: contain; margin-top: 10px; display: none; border-radius: 6px; }
         
@@ -117,6 +121,7 @@
         <button class="tab-btn" onclick="switchTab('listTab', this)">📋 現有庫存清單</button>
     </div>
 
+    <!-- 頁籤一：物品入庫表單 -->
     <div id="formTab" class="tab-content active">
         <form id="itemForm" onsubmit="saveItem(event)">
             <div class="card">
@@ -165,14 +170,15 @@
                 <label>數量:</label>
                 <input type="number" id="itemQty" value="1" min="1" required>
 
-                <button type="submit" class="submit-btn">💾 儲存至本地資料庫</button>
+                <button type="submit" class="submit-btn">💾 儲存至本地資料庫 (入庫)</button>
             </div>
         </form>
     </div>
 
+    <!-- 頁籤二：現有庫存與出庫管理 -->
     <div id="listTab" class="tab-content">
         <div class="card">
-            <h3>📋 目前所有庫存與食品期限</h3>
+            <h3>📋 目前所有庫存、有效期限與出庫</h3>
             <div id="inventoryList">載入中...</div>
         </div>
     </div>
@@ -418,17 +424,48 @@
             barcode: document.getElementById('barcodeInput').value,
             name: document.getElementById('itemName').value,
             expiryDate: document.getElementById('expiryDate').value,
-            qty: document.getElementById('itemQty').value,
+            qty: parseInt(document.getElementById('itemQty').value),
             photo: base64Photo
         };
 
         items.push(newItem);
         localStorage.setItem(key, JSON.stringify(items));
 
-        alert("✅ 物品已成功儲存！");
+        alert("✅ 物品入庫成功！");
         document.getElementById('itemForm').reset();
         document.getElementById('preview').style.display = 'none';
         base64Photo = "";
+        renderInventory();
+    }
+
+    // ➖ 物品出庫（減少數量或扣除）
+    function outItem(id) {
+        let key = `items_${currentUser}`;
+        let items = JSON.parse(localStorage.getItem(key)) || [];
+        let item = items.find(i => i.id === id);
+        if (!item) return;
+
+        let outQtyStr = prompt(`「${item.name}」目前庫存數量為 ${item.qty}。\n請輸入要出庫（減少）的數量：`, "1");
+        if (outQtyStr === null) return;
+        let outQty = parseInt(outQtyStr);
+
+        if (isNaN(outQty) || outQty <= 0) {
+            alert("請輸入有效的正整數！");
+            return;
+        }
+
+        if (outQty >= item.qty) {
+            if (confirm(`出庫數量大於或等於現有庫存，是否直接將此物品從清單中移除（用完/全數出庫）？`)) {
+                items = items.filter(i => i.id !== id);
+            } else {
+                return;
+            }
+        } else {
+            item.qty -= outQty;
+            alert(`✅ 出庫成功！「${item.name}」剩餘數量：${item.qty}`);
+        }
+
+        localStorage.setItem(key, JSON.stringify(items));
         renderInventory();
     }
 
@@ -452,18 +489,21 @@
             div.innerHTML = `
                 <img src="${item.photo || 'https://via.placeholder.com/50'}" alt="照片">
                 <div class="inventory-info">
-                    <strong>${item.name}</strong> (數量: ${item.qty})<br>
+                    <strong>${item.name}</strong> (數量: <strong>${item.qty}</strong>)<br>
                     📍 位置: ${storageName} ${item.location ? '/ ' + item.location : ''}<br>
                     ⏳ 有效期限: ${item.expiryDate || '無'}
                 </div>
-                <button class="delete-btn" onclick="deleteItem(${item.id})">刪除</button>
+                <div class="action-btns">
+                    <button class="out-btn" onclick="outItem(${item.id})">➖ 出庫</button>
+                    <button class="delete-btn" onclick="deleteItem(${item.id})">刪除</button>
+                </div>
             `;
             container.appendChild(div);
         });
     }
 
     function deleteItem(id) {
-        if (!confirm("確定要刪除此筆記錄嗎？")) return;
+        if (!confirm("確定要徹底刪除此筆記錄嗎？")) return;
         let key = `items_${currentUser}`;
         let items = JSON.parse(localStorage.getItem(key)) || [];
         items = items.filter(i => i.id !== id);

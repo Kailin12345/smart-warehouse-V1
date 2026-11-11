@@ -69,7 +69,6 @@ button:disabled{opacity:.55}
     <form id="pwForm" onsubmit="doLogin(event)" hidden>
       <label id="pwLabel">密碼</label>
       <div class="pw"><input type="password" id="loginPw" autocomplete="current-password" required><button type="button" onclick="togglePw('loginPw',this)">顯示</button></div>
-      <label class="chk"><input type="checkbox" id="remember"> 在此裝置保持登入</label>
       <button class="full" type="submit">登入</button>
     </form>
   </div>
@@ -80,7 +79,7 @@ button:disabled{opacity:.55}
     <button class="full ok" type="submit">註冊並登入</button>
   </form>
   <div id="loginMsg" class="msg" role="alert"></div>
-  <p class="hint">提醒：此為純前端登入，資料存在本機瀏覽器，只能防止誤點，無法取代真正的伺服器安全機制。請定期匯出備份。</p>
+  <p class="hint">🔒 資料以 AES-256-GCM 加密後存於本機，金鑰由密碼經 PBKDF2 衍生，不會存放在裝置上。忘記密碼將無法復原資料；閒置 5 分鐘或重新整理頁面會自動登出。請定期匯出備份。</p>
 </div>
 
 <!-- 主程式 -->
@@ -90,6 +89,13 @@ button:disabled{opacity:.55}
   <div class="tabs"><button id="t1" class="on" onclick="tab('formTab')">📝 物品入庫</button><button id="t2" onclick="tab('listTab')">📋 庫存清單</button></div>
 
   <div id="formTab" class="tc on">
+    <div class="card">
+      <h3>➖ 快速出庫</h3>
+      <input id="outQ" placeholder="🔍 篩選要出庫的物品（快到期的排最前）" oninput="fillOut()">
+      <select id="outSel"></select>
+      <div class="row"><input type="number" id="outQty" value="1" min="1"><button type="button" class="warn" onclick="outItem()" style="white-space:nowrap">出庫</button></div>
+      <div id="outMsg" class="hint"></div>
+    </div>
     <form id="itemForm" onsubmit="saveItem(event)">
       <div class="card">
         <h3>1. 儲存庫與儲位</h3>
@@ -140,14 +146,27 @@ button:disabled{opacity:.55}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DEF=[{id:'wardrobe',name:'🧥 臥室衣櫃'},{id:'toolbox',name:'🔧 工具箱'},{id:'pantry',name:'🍫 零食雜物櫃'}];
-let user='',items=[],storages=[],photo='',editId=null,model=null,scanner=null,scanning=false,selUser='',mode='in';
+let KEY=null,wq=Promise.resolve(),idle,fails=0,lockUntil=0,user='',items=[],storages=[],photo='',editId=null,model=null,scanner=null,scanning=false,selUser='',mode='in';
 
 /* ---------- 儲存（含錯誤處理） ---------- */
 function lget(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 function lset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){alert('⚠️ 儲存失敗（空間不足或被瀏覽器禁止）。請先匯出備份並刪除部分照片。');return false}}
-function sget(k){try{return sessionStorage.getItem(k)}catch(e){return null}}
-function sset(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v)}catch(e){}}
-function persist(){lset('items_'+user,items)&&lset('storages_'+user,storages)}
+/* AES-GCM 加密：金鑰由密碼經 PBKDF2 衍生，只存在記憶體（不可匯出） */
+const enc=new TextEncoder(),dec=new TextDecoder();
+const b64=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode(...u.subarray(i,i+8192));return btoa(s)};
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function kdf(pw,salt){const k=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:unb64(salt),iterations:310000},k,512))}
+async function setKey(bits){KEY=await crypto.subtle.importKey('raw',bits.slice(0,32),'AES-GCM',false,['encrypt','decrypt'])}
+async function seal(o){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},KEY,enc.encode(JSON.stringify(o)));return{iv:b64(iv),ct:b64(new Uint8Array(ct))}}
+async function open(r){return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(r.iv)},KEY,unb64(r.ct))))}
+function persist(){const u=user;return wq=wq.then(async()=>{if(KEY&&u)lset('inv_data_'+u,await seal({items,storages}))}).catch(()=>alert('⚠️ 加密儲存失敗'))}
+async function upgrade(n,pw){/* 舊版（明文／SHA-256）帳號升級並加密既有資料 */
+  const salt=rnd(),bits=await kdf(pw,salt),u=users();u[n]={v:2,salt,vf:b64(bits.slice(32))};saveUsers(u);await setKey(bits);
+  user=n;items=lget('items_'+n,[]);storages=lget('storages_'+n,null)||JSON.parse(JSON.stringify(DEF));await persist();
+  try{localStorage.removeItem('items_'+n);localStorage.removeItem('storages_'+n)}catch(e){}}
+function bump(){clearTimeout(idle);if(user)idle=setTimeout(logout,300000)}
+['click','keydown','touchstart'].forEach(e=>addEventListener(e,bump,{passive:true}));
 
 /* ---------- 密碼雜湊 ---------- */
 function rnd(){const a=new Uint8Array(16);crypto.getRandomValues(a);return [...a].map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -175,11 +194,12 @@ function showLogin(){
 async function doLogin(e){
   e.preventDefault();const pw=$('loginPw').value,u=users(),rec=u[selUser];
   if(!rec){msg('請先選擇使用者');return}
+  if(Date.now()<lockUntil){msg('嘗試次數過多，請 '+Math.ceil((lockUntil-Date.now())/1000)+' 秒後再試');return}
   let ok=false;
-  if(rec.legacy!==undefined){ok=rec.legacy===pw;if(ok){const salt=rnd();u[selUser]={salt,hash:await hash(pw,salt)};saveUsers(u)}}
-  else ok=(await hash(pw,rec.salt))===rec.hash;
-  if(!ok){msg('❌ 密碼錯誤');$('loginPw').select();return}
-  enter(selUser,$('remember').checked)
+  if(rec.v===2){const b=await kdf(pw,rec.salt);ok=b64(b.slice(32))===rec.vf;if(ok)await setKey(b)}
+  else{ok=rec.legacy!==undefined?rec.legacy===pw:(await hash(pw,rec.salt))===rec.hash;if(ok)await upgrade(selUser,pw)}
+  if(!ok){if(++fails>=5)lockUntil=Date.now()+30000*(fails-4);msg('❌ 密碼錯誤');$('loginPw').select();return}
+  fails=0;enter(selUser)
 }
 async function doRegister(e){
   e.preventDefault();const n=$('regName').value.trim(),p=$('regPw').value,p2=$('regPw2').value,u=users();
@@ -187,19 +207,20 @@ async function doRegister(e){
   if(u[n]){msg('此名稱已存在，請改用登入');return}
   if(p.length<4){msg('密碼至少 4 碼');return}
   if(p!==p2){msg('兩次密碼不一致');return}
-  const salt=rnd();u[n]={salt,hash:await hash(p,salt)};saveUsers(u);
+  const salt=rnd(),bits=await kdf(p,salt);u[n]={v:2,salt,vf:b64(bits.slice(32))};saveUsers(u);await setKey(bits);
   $('regName').value=$('regPw').value=$('regPw2').value='';enter(n,false)
 }
-function enter(n,remember){
-  user=n;sset('inv_cur',n);try{remember?localStorage.setItem('inv_remember',n):localStorage.removeItem('inv_remember')}catch(e){}
-  items=lget('items_'+n,[]);storages=lget('storages_'+n,null);
-  if(!storages||!storages.length){storages=JSON.parse(JSON.stringify(DEF));persist()}
+async function enter(n){
+  user=n;const r=lget('inv_data_'+n,null);
+  try{if(r){const d=await open(r);items=d.items;storages=d.storages}else{items=[];storages=JSON.parse(JSON.stringify(DEF));persist()}}
+  catch(e){user='';KEY=null;msg('❌ 資料解密失敗');return}
+  fillOut();bump();
   $('login').hidden=true;$('app').hidden=false;$('uname').textContent=n;
   fillStores();resetForm();tab('formTab');
   const p=new URLSearchParams(location.search);if(p.get('storage')&&storages.some(s=>s.id===p.get('storage')))$('storageSel').value=p.get('storage');
   if(p.get('loc'))$('loc').value=p.get('loc');
 }
-function logout(){stopScan();user='';sset('inv_cur',null);try{localStorage.removeItem('inv_remember')}catch(e){}showLogin()}
+function logout(){stopScan();clearTimeout(idle);user='';KEY=null;items=[];storages=[];$('loginPw').value='';showLogin()}
 
 /* ---------- 儲存庫 ---------- */
 function fillStores(keep){
@@ -233,6 +254,7 @@ async function startScan(){
 }
 async function stopScan(){if(scanner&&scanning){scanning=false;try{await scanner.stop();scanner.clear()}catch(e){}}scanning=false;const b=$('scanBtn');if(b)b.textContent='📷 掃描商品條碼'}
 async function lookup(code){
+  const ex=items.find(i=>i.barcode===code);if(ex){$('outSel').value=ex.id;$('outMsg').textContent='📌 庫存已有「'+ex.name+'」，已選入出庫欄位'}
   $('aiMsg').textContent='🔎 查詢商品資料…';
   try{const r=await fetch('https://world.openfoodfacts.org/api/v2/product/'+encodeURIComponent(code)+'.json?fields=product_name,product_name_zh,brands');
     const j=await r.json();const p=j.product||{};const n=p.product_name_zh||p.product_name;
@@ -267,11 +289,10 @@ function saveItem(e){
   const data={storageId:$('storageSel').value,location:$('loc').value.trim(),barcode:$('barcode').value.trim(),name:$('name').value.trim(),expiryDate:$('exp').value,qty:parseInt($('qty').value)||1};
   if(editId){const it=items.find(i=>i.id===editId);Object.assign(it,data);if(photo)it.photo=photo}
   else items.push({id:Date.now(),photo,...data});
-  if(!persistOk())return;
+  persist();
   const keep=data.storageId,was=editId;resetForm(keep);render();
   if(was)tab('listTab');else $('aiMsg').textContent='✅ 已入庫'
 }
-function persistOk(){return lset('items_'+user,items)}
 function resetForm(keep){editId=null;$('itemForm').reset();photo='';$('preview').style.display='none';$('preview').removeAttribute('src');
   $('f3').textContent='3. 詳細資訊與有效期限';$('saveBtn').textContent='💾 儲存入庫';$('cancelEdit').hidden=true;$('aiMsg').textContent='';
   if(keep)$('storageSel').value=keep}
@@ -279,12 +300,18 @@ function editItem(id){const it=items.find(i=>i.id===id);if(!it)return;editId=id;
   $('storageSel').value=it.storageId;$('loc').value=it.location||'';$('barcode').value=it.barcode||'';$('name').value=it.name;$('exp').value=it.expiryDate||'';$('qty').value=it.qty;
   photo='';if(it.photo){$('preview').src=it.photo;$('preview').style.display='block'}
   $('f3').textContent='✏️ 編輯物品';$('saveBtn').textContent='💾 更新物品';$('cancelEdit').hidden=false;window.scrollTo({top:0,behavior:'smooth'})}
-function outItem(id){const it=items.find(i=>i.id===id);if(!it)return;
-  const s=prompt('「'+it.name+'」目前數量 '+it.qty+'，請輸入出庫數量：','1');if(s===null)return;const n=parseInt(s);
-  if(isNaN(n)||n<=0){alert('請輸入有效的正整數');return}
-  if(n>=it.qty){if(!confirm('數量已用完，是否從清單移除？'))return;items=items.filter(i=>i.id!==id)}else it.qty-=n;
-  persistOk();render()}
-function delItem(id){if(!confirm('確定徹底刪除此筆記錄？'))return;items=items.filter(i=>i.id!==id);persistOk();render()}
+function fillOut(){const s=$('outSel'),q=$('outQ').value.trim().toLowerCase(),cur=s.value;s.innerHTML='';
+  items.map(i=>({i,k:expStatus(i.expiryDate).k})).filter(x=>!q||x.i.name.toLowerCase().includes(q)).sort((a,b)=>a.k-b.k)
+   .forEach(({i})=>{const st=storages.find(x=>x.id===i.storageId);s.add(new Option(i.name+'｜剩 '+i.qty+'｜'+(st?st.name:'?'),i.id))});
+  if(!s.options.length)s.add(new Option('（沒有可出庫的物品）',''));else if([...s.options].some(o=>o.value===cur))s.value=cur}
+function outItem(){const id=+$('outSel').value,it=items.find(i=>i.id===id),m=$('outMsg');
+  if(!it){m.textContent='沒有可出庫的物品';return}
+  const n=parseInt($('outQty').value),left=it.qty-n;
+  if(!(n>0)){m.textContent='請輸入有效的正整數';return}
+  if(left<0){m.textContent='出庫數量超過庫存（'+it.qty+'）';return}
+  if(left===0){if(!confirm('「'+it.name+'」將全數出庫並從清單移除，確定？'))return;items=items.filter(i=>i.id!==id)}else it.qty=left;
+  persist();render();$('outQty').value=1;m.textContent='✅ 「'+it.name+'」已出庫 '+n+'，剩餘 '+left}
+function delItem(id){if(!confirm('確定徹底刪除此筆記錄？'))return;items=items.filter(i=>i.id!==id);persist();render()}
 
 /* ---------- 清單 ---------- */
 function expStatus(d){if(!d)return{k:9999,cls:'',t:'無'};
@@ -293,7 +320,7 @@ function expStatus(d){if(!d)return{k:9999,cls:'',t:'無'};
   if(days<=7)return{k:days,cls:'soon',t:esc(d)+' <span class="tag-s">（剩 '+days+' 天）</span>'};
   return{k:days,cls:'',t:esc(d)}}
 function render(){
-  const box=$('list'),fs=$('fStore').value,q=$('fText').value.trim().toLowerCase();
+  fillOut();const box=$('list'),fs=$('fStore').value,q=$('fText').value.trim().toLowerCase();
   const all=items.map(i=>({i,s:expStatus(i.expiryDate)}));
   $('cE').textContent=all.filter(x=>x.s.cls==='expired').length;$('cS').textContent=all.filter(x=>x.s.cls==='soon').length;$('cA').textContent=items.length;
   const rows=all.filter(x=>(!fs||x.i.storageId===fs)&&(!q||[x.i.name,x.i.location,x.i.barcode].join(' ').toLowerCase().includes(q))).sort((a,b)=>a.s.k-b.s.k);
@@ -301,10 +328,10 @@ function render(){
   box.innerHTML=rows.map(({i,s})=>{const st=storages.find(x=>x.id===i.storageId);
     const th=i.photo?'<img class="th" alt="" src="'+esc(i.photo)+'">':'<div class="th">📦</div>';
     return '<div class="item '+s.cls+'">'+th+'<div class="info"><strong>'+esc(i.name)+'</strong>（數量 <strong>'+esc(i.qty)+'</strong>）<br>📍 '+esc(st?st.name:'未知分類')+(i.location?' / '+esc(i.location):'')+'<br>⏳ '+s.t+'</div>'+
-    '<div class="acts"><button class="warn" onclick="outItem('+i.id+')">出庫</button><button onclick="editItem('+i.id+')">編輯</button><button class="bad" onclick="delItem('+i.id+')">刪除</button></div></div>'}).join('')}
+    '<div class="acts"><button onclick="editItem('+i.id+')">編輯</button><button class="bad" onclick="delItem('+i.id+')">刪除</button></div></div>'}).join('')}
 
 /* ---------- 匯出／匯入 ---------- */
-function exportData(){const b=new Blob([JSON.stringify({user,storages,items},null,1)],{type:'application/json'});
+function exportData(){if(!confirm('備份檔是未加密的明文 JSON，請妥善保管，確定匯出？'))return;const b=new Blob([JSON.stringify({user,storages,items},null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='inventory-'+user+'-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove()}
 function importData(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();
   r.onload=()=>{try{const d=JSON.parse(r.result);if(!Array.isArray(d.items)||!Array.isArray(d.storages))throw 0;
@@ -313,12 +340,8 @@ function importData(e){const f=e.target.files[0];if(!f)return;const r=new FileRe
   r.readAsText(f);e.target.value=''}
 
 /* ---------- 啟動 ---------- */
-(function(){
-  const u=users();let cur=sget('inv_cur');
-  if(!cur){try{cur=localStorage.getItem('inv_remember')}catch(e){}}
-  if(cur&&u[cur])enter(cur,!!(function(){try{return localStorage.getItem('inv_remember')}catch(e){return null}})());else showLogin();
-  loadModel();
-})();
+try{localStorage.removeItem('inv_remember')}catch(e){}
+showLogin();loadModel();
 </script>
 </body>
 </html>

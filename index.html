@@ -233,7 +233,7 @@ async function enter(n){
   user=n;const r=lget('inv_data_'+n,null);
   try{if(r){const d=await open(r);items=d.items;storages=d.storages}else{items=[];storages=JSON.parse(JSON.stringify(DEF));persist()}}
   catch(e){user='';KEY=null;msg('❌ 資料解密失敗');return}
-  fillOut();bump();$('t3').hidden=!isAdmin();
+  fillOut();bump();const au=users();if(au[n]&&!Object.values(au).some(x=>x.admin)){au[n].admin=true;saveUsers(au)}$('t3').hidden=!isAdmin();
   $('login').hidden=true;$('app').hidden=false;$('uname').textContent=n;
   fillStores();resetForm();tab('formTab');
   const p=new URLSearchParams(location.search);if(p.get('storage')&&storages.some(s=>s.id===p.get('storage')))$('storageSel').value=p.get('storage');

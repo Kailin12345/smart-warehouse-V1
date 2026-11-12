@@ -461,7 +461,10 @@ function importData(e){const f=e.target.files[0];if(!f)return;const r=new FileRe
 
 /* ---------- 啟動 ---------- */
 try{localStorage.removeItem('inv_remember')}catch(e){}
-$('nfcBase').value=(/^https?:$/.test(location.protocol)&&!/claude|anthropic/i.test(location.hostname))?location.origin+location.pathname:lget('nfc_base','https://claude.ai/artifact/M4Jk4Z4uf9G2FhsLNswy8q');$('nfcNote').hidden=!nfcParse();
+const isWebPage=/^https?:$/.test(location.protocol);
+$('nfcBase').value=isWebPage?location.origin+location.pathname:lget('nfc_base','');
+if(!isWebPage&&!$('nfcBase').value)$('nfcMsg').textContent='目前是從電腦本機檔案開啟，手機無法經由 NFC 存取。請先將網站部署到公開 HTTPS 網址，再產生 NFC 標籤。';
+$('nfcNote').hidden=!nfcParse();
 addEventListener('hashchange',()=>{$('nfcNote').hidden=!nfcParse();user?applyNfc():tryQuick()});
 showLogin();loadModel();tryQuick();
 </script>

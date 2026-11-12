@@ -86,11 +86,15 @@ button:disabled{opacity:.55}
 <div id="app" class="panel" hidden>
   <h1>📦 智慧儲存庫與食品管理</h1>
   <div class="bar"><div>👤 <b id="uname"></b></div><div class="row"><button class="ghost" onclick="logout()">登出</button></div></div>
-  <div class="tabs"><button id="t1" class="on" onclick="tab('formTab')">📝 物品入庫</button><button id="t2" onclick="tab('listTab')">📋 庫存清單</button></div>
+  <div class="tabs"><button id="t1" class="on" onclick="tab('formTab')">📝 物品入庫</button><button id="t2" onclick="tab('listTab')">📋 庫存清單</button><button id="t3" onclick="tab('adminTab')" hidden>👑 管理</button></div>
 
   <div id="formTab" class="tc on">
     <div class="card">
       <h3>➖ 快速出庫</h3>
+      <button type="button" class="pur full" id="outScanBtn" onclick="toggleScan('out')" style="margin-top:0">📷 掃條碼出庫</button>
+      <div id="readerOut" style="width:100%;margin-top:8px"></div>
+      <input id="outCode" inputmode="numeric" placeholder="或輸入／用掃描槍輸入條碼後按 Enter" onkeydown="if(event.key==='Enter'){event.preventDefault();scanOut(this.value.trim())}">
+      <label class="chk"><input type="checkbox" id="outAuto"> 掃到條碼立即出庫（依下方數量）</label>
       <input id="outQ" placeholder="🔍 篩選要出庫的物品（快到期的排最前）" oninput="fillOut()">
       <select id="outSel"></select>
       <div class="row"><input type="number" id="outQty" value="1" min="1"><button type="button" class="warn" onclick="outItem()" style="white-space:nowrap">出庫</button></div>
@@ -138,6 +142,15 @@ button:disabled{opacity:.55}
     <div id="list"></div>
     <div class="tools"><button class="ghost" onclick="exportData()">⬇ 匯出備份</button><button class="ghost" onclick="document.getElementById('imp').click()">⬆ 匯入備份</button></div>
     <input type="file" id="imp" accept="application/json" hidden onchange="importData(event)">
+  </div>
+
+  <div id="adminTab" class="tc">
+    <div class="card"><h3>👑 使用者管理</h3>
+      <div id="uAdmList"></div>
+      <label>管理員密碼（刪除時確認用）</label><input type="password" id="admPw" autocomplete="current-password">
+      <div id="admMsg" class="msg" role="alert"></div>
+      <p class="hint">刪除使用者會永久刪除其加密資料，無法復原。管理員無法查看其他人的物品內容。</p>
+    </div>
   </div>
 </div>
 </div>
@@ -199,7 +212,7 @@ async function doLogin(e){
   if(rec.v===2){const b=await kdf(pw,rec.salt);ok=b64(b.slice(32))===rec.vf;if(ok)await setKey(b)}
   else{ok=rec.legacy!==undefined?rec.legacy===pw:(await hash(pw,rec.salt))===rec.hash;if(ok)await upgrade(selUser,pw)}
   if(!ok){if(++fails>=5)lockUntil=Date.now()+30000*(fails-4);msg('❌ 密碼錯誤');$('loginPw').select();return}
-  fails=0;enter(selUser)
+  fails=0;const au=users();if(!Object.values(au).some(x=>x.admin)){au[selUser].admin=true;saveUsers(au)}enter(selUser)
 }
 async function doRegister(e){
   e.preventDefault();const n=$('regName').value.trim(),p=$('regPw').value,p2=$('regPw2').value,u=users();
@@ -207,14 +220,14 @@ async function doRegister(e){
   if(u[n]){msg('此名稱已存在，請改用登入');return}
   if(p.length<4){msg('密碼至少 4 碼');return}
   if(p!==p2){msg('兩次密碼不一致');return}
-  const salt=rnd(),bits=await kdf(p,salt);u[n]={v:2,salt,vf:b64(bits.slice(32))};saveUsers(u);await setKey(bits);
+  const salt=rnd(),bits=await kdf(p,salt);u[n]={v:2,salt,vf:b64(bits.slice(32)),admin:!Object.keys(u).length};saveUsers(u);await setKey(bits);
   $('regName').value=$('regPw').value=$('regPw2').value='';enter(n,false)
 }
 async function enter(n){
   user=n;const r=lget('inv_data_'+n,null);
   try{if(r){const d=await open(r);items=d.items;storages=d.storages}else{items=[];storages=JSON.parse(JSON.stringify(DEF));persist()}}
   catch(e){user='';KEY=null;msg('❌ 資料解密失敗');return}
-  fillOut();bump();
+  fillOut();bump();$('t3').hidden=!isAdmin();
   $('login').hidden=true;$('app').hidden=false;$('uname').textContent=n;
   fillStores();resetForm();tab('formTab');
   const p=new URLSearchParams(location.search);if(p.get('storage')&&storages.some(s=>s.id===p.get('storage')))$('storageSel').value=p.get('storage');
@@ -241,18 +254,21 @@ function delStorage(){const a=$('srcSel').value;
   if(!confirm('確定刪除這個儲存庫？'))return;storages=storages.filter(s=>s.id!==a);persist();fillStores()}
 
 /* ---------- 分頁 ---------- */
-function tab(id){stopScan();['formTab','listTab'].forEach(t=>$(t).classList.toggle('on',t===id));
-  $('t1').classList.toggle('on',id==='formTab');$('t2').classList.toggle('on',id==='listTab');if(id==='listTab')render()}
+function tab(id){stopScan();const T={formTab:'t1',listTab:'t2',adminTab:'t3'};
+  for(const t in T){$(t).classList.toggle('on',t===id);$(T[t]).classList.toggle('on',t===id)}
+  if(id==='listTab')render();if(id==='adminTab')renderAdmin()}
 
 /* ---------- 條碼 ---------- */
-function toggleScan(){scanning?stopScan():startScan()}
+let scanMode='in',rid='reader';
+function resetScanBtns(){$('scanBtn').textContent='📷 掃描商品條碼';$('outScanBtn').textContent='📷 掃條碼出庫'}
+function toggleScan(m){if(scanning){stopScan();return}scanMode=m||'in';rid=m==='out'?'readerOut':'reader';startScan()}
 async function startScan(){
   if(typeof Html5Qrcode==='undefined'){alert('條碼掃描元件載入失敗，請手動輸入條碼。');return}
-  try{scanner=scanner||new Html5Qrcode('reader');scanning=true;$('scanBtn').textContent='⏹ 停止掃描';
-    await scanner.start({facingMode:'environment'},{fps:10,qrbox:200},async t=>{$('barcode').value=t;await stopScan();lookup(t)},()=>{})
-  }catch(err){scanning=false;$('scanBtn').textContent='📷 掃描商品條碼';alert('相機啟動失敗：'+(err&&err.message||err)+'\n請確認已允許相機權限，或手動輸入條碼。')}
+  try{scanner=new Html5Qrcode(rid);scanning=true;$(scanMode==='out'?'outScanBtn':'scanBtn').textContent='⏹ 停止掃描';
+    await scanner.start({facingMode:'environment'},{fps:10,qrbox:200},async t=>{const m=scanMode;await stopScan();if(m==='out')scanOut(t);else{$('barcode').value=t;lookup(t)}},()=>{})
+  }catch(err){scanning=false;resetScanBtns();alert('相機啟動失敗：'+(err&&err.message||err)+'\n請確認已允許相機權限，或手動輸入條碼。')}
 }
-async function stopScan(){if(scanner&&scanning){scanning=false;try{await scanner.stop();scanner.clear()}catch(e){}}scanning=false;const b=$('scanBtn');if(b)b.textContent='📷 掃描商品條碼'}
+async function stopScan(){if(scanner&&scanning){scanning=false;try{await scanner.stop();scanner.clear()}catch(e){}}scanning=false;resetScanBtns()}
 async function lookup(code){
   const ex=items.find(i=>i.barcode===code);if(ex){$('outSel').value=ex.id;$('outMsg').textContent='📌 庫存已有「'+ex.name+'」，已選入出庫欄位'}
   $('aiMsg').textContent='🔎 查詢商品資料…';
@@ -329,6 +345,32 @@ function render(){
     const th=i.photo?'<img class="th" alt="" src="'+esc(i.photo)+'">':'<div class="th">📦</div>';
     return '<div class="item '+s.cls+'">'+th+'<div class="info"><strong>'+esc(i.name)+'</strong>（數量 <strong>'+esc(i.qty)+'</strong>）<br>📍 '+esc(st?st.name:'未知分類')+(i.location?' / '+esc(i.location):'')+'<br>⏳ '+s.t+'</div>'+
     '<div class="acts"><button onclick="editItem('+i.id+')">編輯</button><button class="bad" onclick="delItem('+i.id+')">刪除</button></div></div>'}).join('')}
+
+/* ---------- 條碼出庫 ---------- */
+function scanOut(code){const m=$('outMsg'),ms=items.filter(i=>i.barcode===code);
+  if(!code)return;
+  if(!ms.length){m.textContent='❌ 庫存中找不到條碼 '+code;return}
+  const it=ms.sort((a,b)=>expStatus(a.expiryDate).k-expStatus(b.expiryDate).k)[0];
+  $('outQ').value='';$('outCode').value='';fillOut();$('outSel').value=it.id;
+  if($('outAuto').checked)outItem();
+  else m.textContent='📌 已選取「'+it.name+'」（剩 '+it.qty+'）'+(ms.length>1?'，有 '+ms.length+' 筆同條碼，已選最快到期的':'')+'，確認數量後按「出庫」'}
+
+/* ---------- 管理員：使用者管理 ---------- */
+function isAdmin(){return !!(users()[user]||{}).admin}
+function renderAdmin(){const u=users(),box=$('uAdmList');box.innerHTML='';
+  Object.keys(u).forEach(n=>{const d=document.createElement('div');d.className='item';
+    d.innerHTML='<span class="av">'+esc([...n][0]||'?')+'</span><div class="info"><strong>'+esc(n)+'</strong>'+(u[n].admin?' 👑 管理員':'')+(n===user?'（目前登入）':'')+'</div>';
+    if(n!==user){const b=document.createElement('button');b.className='bad';b.textContent='刪除';b.onclick=()=>delUser(n);d.appendChild(b)}
+    box.appendChild(d)})}
+async function delUser(n){
+  const m=$('admMsg'),u=users(),me=u[user];m.className='msg';
+  if(!me||!me.admin||n===user||!u[n])return;
+  if(me.v!==2||b64((await kdf($('admPw').value,me.salt)).slice(32))!==me.vf){m.textContent='❌ 管理員密碼錯誤';return}
+  if(!confirm('確定永久刪除使用者「'+n+'」及其所有資料？'))return;
+  delete u[n];saveUsers(u);
+  const old=lget('app_users_secure',{});delete old[n];lset('app_users_secure',old);
+  try{['inv_data_','items_','storages_'].forEach(p=>localStorage.removeItem(p+n))}catch(e){}
+  $('admPw').value='';m.textContent='✅ 已刪除「'+n+'」';m.className='msg good';renderAdmin()}
 
 /* ---------- 匯出／匯入 ---------- */
 function exportData(){if(!confirm('備份檔是未加密的明文 JSON，請妥善保管，確定匯出？'))return;const b=new Blob([JSON.stringify({user,storages,items},null,1)],{type:'application/json'});

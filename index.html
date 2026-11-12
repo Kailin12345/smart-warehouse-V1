@@ -386,9 +386,12 @@ function render(){
 const hex=s=>[...enc.encode(s)].map(x=>x.toString(16).padStart(2,'0')).join('');
 function nfcParse(){const h=location.hash.slice(1);if(h.indexOf('nfc-')!==0)return null;
   const [sid,l]=h.slice(4).split('--');let loc='';try{if(l)loc=dec.decode(Uint8Array.from(l.match(/../g).map(x=>parseInt(x,16))))}catch(e){}return{sid,loc}}
-function applyNfc(){const nf=nfcParse(),s=nf&&storages.find(x=>x.id.replace(/_/g,'-')===nf.sid);
-  nfcStore=s?s.id:'';nfcLoc=s?nf.loc:'';fillOut();showNfc();
-  if(s){$('storageSel').value=s.id;if(nfcLoc)$('loc').value=nfcLoc;openHub()}else $('fStore').value=''}
+function applyNfc(){const nf=nfcParse();
+  if(!nf){nfcStore='';nfcLoc='';fillOut();showNfc();$('fStore').value='';return}
+  const s=storages.find(x=>x.id.replace(/_/g,'-')===nf.sid);
+  try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}/* 清掉 # 後，再碰同一張標籤才會重新觸發 */
+  if(!s){nfcStore='';nfcLoc='';fillOut();showNfc();alert('⚠️ 找不到這張標籤對應的倉庫（可能是不同帳號、不同裝置，或倉庫已被刪除）。請重新產生標籤網址。');return}
+  nfcStore=s.id;nfcLoc=nf.loc;fillOut();showNfc();$('storageSel').value=s.id;if(nfcLoc)$('loc').value=nfcLoc;openHub()}
 function showNfc(){const b=$('nfcBar');if(!nfcStore){b.hidden=true;return}
   const st=storages.find(s=>s.id===nfcStore),l=items.filter(i=>i.storageId===nfcStore),soon=l.filter(i=>expStatus(i.expiryDate).k<=7).length;
   $('nfcTitle').textContent='📍 '+(st?st.name:'')+(nfcLoc?' / '+nfcLoc:'');

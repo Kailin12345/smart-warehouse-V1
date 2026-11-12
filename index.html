@@ -4,15 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>智慧儲存庫與食品過期管理系統</title>
-<!-- 條碼掃描函式庫 -->
+<!-- 條碼掃描模組 -->
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 :root {
-  --bg: #f4f7fa;
+  --bg: #f1f5f9;
   --card: #ffffff;
   --sub: #f8fafc;
-  --bd: #e2e8f0;
-  --tx: #1e293b;
+  --bd: #cbd5e1;
+  --tx: #0f172a;
   --mu: #64748b;
   --pri: #0284c7;
   --pri-bg: #e0f2fe;
@@ -23,6 +23,7 @@
   --bad: #dc2626;
   --bad-bg: #fee2e2;
   --pur: #7c3aed;
+  --pur-bg: #ede9fe;
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -41,7 +42,8 @@
     --warn-bg: #78350f;
     --bad: #f87171;
     --bad-bg: #7f1d1d;
-    --pur: #a78bfa;
+    --pur: #c084fc;
+    --pur-bg: #581c87;
   }
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -49,20 +51,20 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
   background: var(--bg);
   color: var(--tx);
-  padding: 14px;
+  padding: 12px;
   min-height: 100vh;
 }
 .wrap { max-width: 600px; margin: 0 auto; }
 .panel {
   background: var(--card);
   border-radius: var(--radius);
-  padding: 18px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  padding: 16px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.06);
   border: 1px solid var(--bd);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
-h1 { font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-h3 { font-size: 15px; font-weight: 700; border-bottom: 2px solid var(--bd); padding-bottom: 6px; margin-bottom: 12px; }
+h1 { font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+h3 { font-size: 15px; font-weight: 700; border-bottom: 2px solid var(--bd); padding-bottom: 6px; margin-bottom: 10px; }
 .card {
   background: var(--sub);
   border: 1px solid var(--bd);
@@ -97,7 +99,6 @@ button {
   justify-content: center;
   gap: 6px;
   min-height: 44px;
-  transition: opacity 0.15s;
 }
 button:active { opacity: 0.85; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -107,14 +108,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .bad { background: var(--bad); }
 .pur { background: var(--pur); }
 .ghost { background: transparent; color: var(--pri); border: 1px solid var(--bd); }
-.ghost:hover { background: var(--sub); }
 .row { display: flex; gap: 8px; align-items: center; }
 .row > * { margin-top: 5px; }
-.msg { font-size: 13px; min-height: 18px; margin-top: 8px; color: var(--bad); }
+.msg { font-size: 13px; min-height: 18px; margin-top: 6px; color: var(--bad); }
 .msg.good { color: var(--ok); }
 .hint { font-size: 12px; color: var(--mu); margin-top: 4px; line-height: 1.4; }
 
-/* Top Bar */
+/* Top Navigation Bar */
 .bar {
   display: flex;
   justify-content: space-between;
@@ -123,13 +123,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border: 1px solid var(--bd);
   border-radius: 10px;
   padding: 8px 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   font-size: 14px;
 }
 .user-tag { background: var(--pri-bg); color: var(--pri); padding: 4px 10px; border-radius: 20px; font-weight: 700; font-size: 13px; }
 
 /* Tabs */
-.tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
 .tabs button { flex: 1; background: var(--sub); color: var(--mu); border: 1px solid var(--bd); }
 .tabs button.on { background: var(--pri); color: #fff; border-color: var(--pri); }
 .tc { display: none; }
@@ -141,7 +141,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border: 1px solid var(--pri);
   border-radius: 12px;
   padding: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .nfc-banner-header { display: flex; justify-content: space-between; align-items: center; }
 .nfc-title { font-weight: 800; font-size: 15px; color: var(--tx); display: flex; align-items: center; gap: 6px; }
@@ -193,10 +193,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .chips button { padding: 6px 10px; font-size: 12px; min-height: 34px; background: var(--sub); color: var(--pri); border: 1px solid var(--bd); }
 
-/* Modal */
+/* Modals */
 .modal-bg {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.65);
   display: flex; align-items: center; justify-content: center;
   z-index: 1000; padding: 14px;
 }
@@ -209,7 +209,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   max-height: 90vh;
   overflow-y: auto;
   border: 1px solid var(--bd);
-  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.25);
 }
 .modal-hub-btn {
   display: flex;
@@ -229,65 +229,30 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .modal-hub-btn .icon {
   width: 44px; height: 44px; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: #fff; flex: none;
+  font-size: 22px; color: #fff; flex: none;
 }
 .badge-count {
   display: inline-block; background: var(--pri-bg); color: var(--pri);
   padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 700;
+}
+.tag-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--card); border: 1px solid var(--bd); border-radius: 8px;
+  padding: 10px 12px; margin-top: 6px; font-size: 13px;
 }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <!-- ================= 登入 / 註冊面板 ================= -->
-  <div id="loginPanel" class="panel" hidden>
-    <div style="font-size:46px; text-align:center; margin-bottom:8px;">📦</div>
-    <h1>智慧儲存庫與食品管理</h1>
-    <div class="tabs">
-      <button id="tabIn" class="on" onclick="setAuthMode('in')">登入</button>
-      <button id="tabUp" onclick="setAuthMode('up')">新增使用者</button>
-    </div>
-
-    <!-- 登入區塊 -->
-    <div id="authInBox">
-      <div id="userGrid" style="display:grid; gap:8px; margin:12px 0;"></div>
-      <form id="loginForm" onsubmit="doLogin(event)" hidden>
-        <label id="pwPrompt">密碼</label>
-        <div class="row">
-          <input type="password" id="loginPw" autocomplete="current-password" required placeholder="輸入密碼">
-          <button type="button" class="ghost" onclick="togglePassword('loginPw', this)">顯示</button>
-        </div>
-        <button class="full" type="submit">登入</button>
-      </form>
-    </div>
-
-    <!-- 註冊區塊 -->
-    <form id="authUpBox" onsubmit="doRegister(event)" hidden>
-      <label>使用者名稱</label>
-      <input id="regName" maxlength="20" placeholder="例如：媽媽" required>
-      <label>設定密碼（至少 4 碼）</label>
-      <div class="row">
-        <input type="password" id="regPw" required placeholder="至少4碼">
-        <button type="button" class="ghost" onclick="togglePassword('regPw', this)">顯示</button>
-      </div>
-      <label>再次確認密碼</label>
-      <input type="password" id="regPw2" required placeholder="再次輸入密碼">
-      <button class="full ok" type="submit">註冊並登入</button>
-    </form>
-
-    <div id="loginMsg" class="msg"></div>
-    <p class="hint" style="margin-top:14px;">🔒 本地資料加鹽加密儲存於裝置內，保障個人隱私安全；閒置或更換頁面自動上鎖，免連接第三方外部伺服器。</p>
-  </div>
-
-  <!-- ================= 主應用程式面板 ================= -->
-  <div id="appPanel" class="panel" hidden>
+  <!-- ================= 主面板 (預設啟動直接進入，不卡在登入) ================= -->
+  <div id="appPanel" class="panel">
     <!-- Top Bar -->
     <div class="bar">
-      <div>📦 <b>智慧儲存庫</b> <span id="userBadge" class="user-tag"></span></div>
+      <div>📦 <b>智慧儲存庫</b> <span id="userBadge" class="user-tag">預設倉庫</span></div>
       <div class="row">
-        <button class="ghost" onclick="openSimulateNfcModal()" style="font-size:12px; min-height:36px;">📲 模擬感應 NFC</button>
-        <button class="ghost" onclick="logout()" style="font-size:12px; min-height:36px;">登出</button>
+        <button class="ghost" onclick="openNfcBindingModal()" style="font-size:12px; min-height:36px;">🏷️ 貼紙號碼綁定</button>
+        <button class="ghost" onclick="openSimulateNfcModal()" style="font-size:12px; min-height:36px;">📲 模擬感應</button>
       </div>
     </div>
 
@@ -295,7 +260,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div id="nfcBanner" class="nfc-banner" hidden>
       <div class="nfc-banner-header">
         <div class="nfc-title"><span>📲</span> <span id="nfcBannerTitle"></span></div>
-        <button class="ghost" onclick="clearNfc()" style="min-height:30px; font-size:12px; padding:2px 8px;">✕ 關閉標籤</button>
+        <button class="ghost" onclick="clearNfc()" style="min-height:30px; font-size:12px; padding:2px 8px;">✕ 關閉指定倉庫</button>
       </div>
       <div id="nfcBannerInfo" class="hint" style="margin-top:4px;"></div>
       <div class="nfc-actions">
@@ -309,7 +274,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="tabs">
       <button id="t1" class="on" onclick="switchTab('inboundTab')">📝 物品入庫</button>
       <button id="t2" onclick="switchTab('inventoryTab')">📋 庫存清單</button>
-      <button id="t3" onclick="switchTab('adminTab')" hidden>👑 管理</button>
+      <button id="t3" onclick="switchTab('nfcTab')">🏷️ NFC貼紙設定</button>
     </div>
 
     <!-- ================= TAB 1: 物品入庫與快速出庫 ================= -->
@@ -343,10 +308,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             <input id="customStorageName" placeholder="例如：💊 藥品急救箱">
             <button type="button" onclick="addNewStorage()">新增</button>
           </div>
-          <label>儲位代號（可由 NFC 帶入）</label>
+          <label>儲位代號（可由 NFC 貼紙帶入）</label>
           <input id="itemLoc" placeholder="例如：抽屜-A1">
           <details style="margin-top:10px;">
-            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--pri);">🔄 倉庫管理（轉移／刪除／NFC網址）</summary>
+            <summary style="cursor:pointer; font-size:13px; font-weight:600; color:var(--pri);">🔄 倉庫管理（轉移／刪除）</summary>
             <label>來源倉庫</label><select id="srcStorage"></select>
             <label>轉移到目標倉庫</label>
             <div class="row">
@@ -354,13 +319,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
               <button type="button" class="pur" onclick="transferStorageItems()">轉移物品</button>
             </div>
             <button type="button" class="bad full" onclick="deleteStorageCategory()">刪除來源倉庫（需先清空）</button>
-            <hr style="margin:12px 0; border:0; border-top:1px solid var(--bd);">
-            <label>📲 NFC 標籤網址產生器</label>
-            <input id="nfcBaseUrl" placeholder="https://...">
-            <button type="button" class="pur full" onclick="generateNfcUrl()">產生此倉庫 NFC 標籤網址</button>
-            <input id="nfcUrlResult" readonly hidden style="background:var(--sub);">
-            <button type="button" id="nfcWriteBtn" class="ok full" onclick="writeNfcTag()" hidden>寫入實體 NFC 貼紙</button>
-            <div id="nfcStatusMsg" class="hint"></div>
           </details>
         </div>
 
@@ -376,7 +334,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           <div id="barcodeLookupMsg" class="hint"></div>
           <!-- 智能建議晶片 -->
           <div style="margin-top:10px;">
-            <span style="font-size:12px; color:var(--mu);">✨ 快速分類建議：</span>
+            <span style="font-size:12px; color:var(--mu);">✨ 快速分類品名建議：</span>
             <div class="chips">
               <button type="button" onclick="setSuggestName('牛奶')">🥛 牛奶</button>
               <button type="button" onclick="setSuggestName('吐司麵包')">🍞 吐司</button>
@@ -427,28 +385,39 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
       <!-- 備份工具 -->
       <div class="card" style="margin-top:16px;">
-        <h3>🛠️ 備份與安全工具</h3>
+        <h3>🛠️ 備份與資料還原</h3>
         <div class="row">
           <button class="ghost" onclick="exportDataJson()" style="flex:1;">⬇ 匯出備份</button>
           <button class="ghost" onclick="document.getElementById('importFileInput').click()" style="flex:1;">⬆ 匯入備份</button>
         </div>
         <input type="file" id="importFileInput" accept="application/json" hidden onchange="importDataJson(event)">
-        <label style="display:flex; align-items:center; gap:8px; font-weight:normal; margin-top:12px;">
-          <input type="checkbox" id="quickNfcLoginChk" onchange="toggleQuickLogin(this)" style="width:auto; margin:0;">
-          ⚡ NFC 碰觸標籤時免密碼自動登入此帳號
-        </label>
       </div>
     </div>
 
-    <!-- ================= TAB 3: 管理員管理 ================= -->
-    <div id="adminTab" class="tc">
+    <!-- ================= TAB 3: NFC 貼紙號碼綁定與管理 ================= -->
+    <div id="nfcTab" class="tc">
       <div class="card">
-        <h3>👑 系統使用者權限管理</h3>
-        <div id="adminUserList"></div>
-        <label>管理員確認密碼</label>
-        <input type="password" id="adminConfirmPw" placeholder="執行權限變更或刪除時驗證">
-        <div id="adminFeedback" class="msg"></div>
-        <p class="hint">各帳號加密資料各自獨立，刪除帳號會一併清除其專屬倉庫與存貨資料。</p>
+        <h3>🏷️ NFC 貼紙號碼綁定倉庫</h3>
+        <p class="hint">手機感應實體 NFC 貼紙讀取卡號／UID，或手動填入貼紙號碼，直接與指定倉庫及儲位綁定。綁定後手機碰貼紙即可秒進該倉庫！</p>
+        
+        <button type="button" class="pur full" onclick="openNfcBindingModal()">➕ 新增貼紙號碼綁定</button>
+
+        <h4 style="margin-top:16px; font-size:14px;">已綁定的 NFC 貼紙列表：</h4>
+        <div id="nfcBindingsList" style="margin-top:8px;"></div>
+        <div style="margin-top:14px; text-align:center;">
+          <button type="button" class="ghost" onclick="forceResetStorages()" style="font-size:12px; min-height:32px;">🔄 重設倉庫選單（解決空選單異常）</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>📲 寫入標籤網址至 NFC 貼紙</h3>
+        <p class="hint">若您的 NFC 貼紙支援 NDEF 寫入，可將特定倉庫的專屬網址直接寫入貼紙中：</p>
+        <label>選擇目標倉庫</label>
+        <select id="writeStorageSelect"></select>
+        <label>儲位代號</label>
+        <input id="writeLocInput" placeholder="例如：抽屜-A1">
+        <button type="button" class="ok full" onclick="writeNfcUrlToTag()">📲 靠上手機寫入此倉庫網址</button>
+        <div id="writeNfcFeedback" class="hint"></div>
       </div>
     </div>
   </div>
@@ -456,11 +425,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 </div>
 
 <!-- ================= 彈窗 1: NFC 專屬倉庫快捷操作面板 ================= -->
-<div id="nfcHubModal" class="modal-bg" hidden>
+<div id="nfcHubModal" class="modal-bg" hidden onclick="if(event.target===this)closeNfcHubModal()">
   <div class="modal-box">
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <span class="user-tag" style="background:var(--ok-bg); color:var(--ok);">📲 NFC 倉庫已就緒</span>
-      <button class="ghost" onclick="closeNfcHubModal()" style="min-height:30px; padding:2px 8px;">✕</button>
+      <button class="ghost" onclick="closeNfcHubModal()" style="min-height:32px; padding:2px 8px; font-size:16px;">✕</button>
     </div>
     <div style="margin:12px 0 6px;">
       <h2 id="hubStorageTitle" style="font-size:22px;"></h2>
@@ -499,18 +468,46 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 </div>
 
 <!-- ================= 彈窗 2: 模擬感應 NFC 標籤 ================= -->
-<div id="simNfcModal" class="modal-bg" hidden>
+<div id="simNfcModal" class="modal-bg" hidden onclick="if(event.target===this)closeSimulateNfcModal()">
   <div class="modal-box">
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <h3 style="border:0; margin:0;">📲 模擬手機接觸 NFC 標籤</h3>
-      <button class="ghost" onclick="closeSimulateNfcModal()" style="min-height:30px; padding:2px 8px;">✕</button>
+      <button class="ghost" onclick="closeSimulateNfcModal()" style="min-height:32px; padding:2px 8px; font-size:16px;">✕</button>
     </div>
-    <p class="hint" style="margin-top:6px;">在無實體 NFC 貼紙時，您可選取指定倉庫與儲位直接模擬手機碰觸情境：</p>
+    <p class="hint" style="margin-top:6px;">請選取指定倉庫與儲位直接模擬手機碰觸情境：</p>
     <label>選擇要接觸的倉庫：</label>
     <select id="simStorageSelect"></select>
     <label>儲位代號：</label>
     <input id="simLocationInput" value="抽屜-A1">
     <button class="full ok" onclick="executeSimulatedNfc()" style="margin-top:16px;">📲 接觸 NFC 貼紙（進入指定倉庫）</button>
+  </div>
+</div>
+
+<!-- ================= 彈窗 3: 綁定 NFC 貼紙卡號／號碼到倉庫 ================= -->
+<div id="bindNfcModal" class="modal-bg" hidden onclick="if(event.target===this)closeNfcBindingModal()">
+  <div class="modal-box">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="border:0; margin:0;">🏷️ 綁定 NFC 貼紙號碼到倉庫</h3>
+      <button class="ghost" onclick="closeNfcBindingModal()" style="min-height:32px; padding:2px 8px; font-size:16px;">✕</button>
+    </div>
+    <p class="hint" style="margin-top:6px;">手機靠近實體 NFC 貼紙自動讀取卡號，或手動輸入貼紙號碼進行綁定：</p>
+
+    <button type="button" id="scanTagIdBtn" class="pur full" onclick="readTagIdViaNfc()">📲 手機靠上實體 NFC 貼紙感應卡號</button>
+    <div id="readTagIdMsg" class="hint" style="color:var(--pri); font-weight:bold;"></div>
+
+    <label>NFC 貼紙號碼／卡號 UID：</label>
+    <input id="bindTagIdInput" placeholder="例如：04:5A:2B:C1 或 貼紙-01">
+
+    <label>綁定到倉庫：</label>
+    <select id="bindStorageSelect"></select>
+
+    <label>儲位編號（選填）：</label>
+    <input id="bindLocationInput" placeholder="例如：抽屜-A1、層架-2">
+
+    <label>貼紙備註名稱（選填）：</label>
+    <input id="bindNoteInput" placeholder="例如：客廳抽屜上方貼紙">
+
+    <button type="button" class="ok full" onclick="saveNfcBinding()" style="margin-top:14px;">💾 確認綁定貼紙</button>
   </div>
 </div>
 
@@ -523,210 +520,105 @@ const DEFAULT_STORAGES = [
   { id: 'pantry', name: '🍫 零食雜物櫃' }
 ];
 
-let currentUser = '';
-let storages = [];
+// 全域狀態：保證 storages 永遠有預設值，不會產生空下拉選單
+let storages = JSON.parse(JSON.stringify(DEFAULT_STORAGES));
 let items = [];
+let nfcBindings = {}; // { tagId: { storageId, location, note } }
 let activeNfcStorageId = '';
 let activeNfcLocation = '';
 let editingItemId = null;
 let itemPhotoBase64 = '';
 let qrScanner = null;
 let qrScannerActive = false;
-let authMode = 'in';
-let selectedLoginUser = '';
 
-/* ---------- 本地儲存與密碼處理 ---------- */
+/* ---------- 本地儲存 ---------- */
 function getLocal(k, fallback) {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; }
   catch(e) { return fallback; }
 }
 function setLocal(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); return true; }
-  catch(e) { alert('儲存失敗：空間不足或被瀏覽器限制'); return false; }
+  catch(e) { return false; }
 }
 
-async function sha256(text) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-function randomSalt() {
-  const arr = new Uint8Array(16);
-  crypto.getRandomValues(arr);
-  return [...arr].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function getAllUsers() { return getLocal('sw_users', {}); }
-function saveAllUsers(u) { setLocal('sw_users', u); }
-
-/* ---------- 認證畫面 ---------- */
-function setAuthMode(mode) {
-  authMode = mode;
-  $('loginMsg').textContent = '';
-  $('authInBox').hidden = mode !== 'in';
-  $('authUpBox').hidden = mode !== 'up';
-  $('tabIn').classList.toggle('on', mode === 'in');
-  $('tabUp').classList.toggle('on', mode === 'up');
-}
-
-function togglePassword(id, btn) {
-  const input = $(id);
-  input.type = input.type === 'password' ? 'text' : 'password';
-  btn.textContent = input.type === 'password' ? '顯示' : '隱藏';
-}
-
-function showLoginScreen() {
-  $('appPanel').hidden = true;
-  $('loginPanel').hidden = false;
-  $('loginForm').hidden = true;
-  selectedLoginUser = '';
-  
-  const users = getAllUsers();
-  const names = Object.keys(users);
-  const grid = $('userGrid');
-  grid.innerHTML = '';
-
-  names.forEach(name => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'modal-hub-btn';
-    btn.style.marginTop = '0';
-    btn.innerHTML = `<div class="icon" style="background:var(--pri); font-weight:bold;">${name[0]}</div>
-      <div style="flex:1;">
-        <div style="font-weight:700;">${name}</div>
-        <div class="hint">${users[name].isAdmin ? '👑 系統管理員' : '一般使用者'}</div>
-      </div>`;
-    btn.onclick = () => {
-      selectedLoginUser = name;
-      [...grid.children].forEach(c => c.style.borderColor = 'var(--bd)');
-      btn.style.borderColor = 'var(--pri)';
-      $('loginForm').hidden = false;
-      $('pwPrompt').textContent = `「${name}」的密碼`;
-      $('loginPw').value = '';
-      $('loginPw').focus();
-    };
-    grid.appendChild(btn);
-  });
-
-  if (!names.length) {
-    setAuthMode('up');
-    $('tabIn').disabled = true;
-    $('loginMsg').textContent = '尚無使用者，請先註冊第一個管理員帳號。';
-  } else {
-    $('tabIn').disabled = false;
-    setAuthMode('in');
+function loadAppData() {
+  const savedData = getLocal('sw_main_warehouse', null);
+  if (savedData) {
+    if (Array.isArray(savedData.storages) && savedData.storages.length) {
+      storages = savedData.storages;
+    }
+    if (Array.isArray(savedData.items)) {
+      items = savedData.items;
+    }
   }
+  nfcBindings = getLocal('sw_nfc_bindings', {});
+  persistAppData();
 }
 
-async function doLogin(e) {
-  e.preventDefault();
-  const pw = $('loginPw').value;
-  const users = getAllUsers();
-  const rec = users[selectedLoginUser];
-  if (!rec) return;
-
-  const hash = await sha256(rec.salt + ':' + pw);
-  if (hash !== rec.hash) {
-    $('loginMsg').textContent = '❌ 密碼錯誤';
-    return;
-  }
-  enterUserSession(selectedLoginUser);
+function persistAppData() {
+  setLocal('sw_main_warehouse', { storages, items });
+  setLocal('sw_nfc_bindings', nfcBindings);
 }
 
-async function doRegister(e) {
-  e.preventDefault();
-  const name = $('regName').value.trim();
-  const pw = $('regPw').value;
-  const pw2 = $('regPw2').value;
-
-  if (!name) { $('loginMsg').textContent = '請輸入名稱'; return; }
-  if (pw.length < 4) { $('loginMsg').textContent = '密碼至少需 4 碼'; return; }
-  if (pw !== pw2) { $('loginMsg').textContent = '兩次輸入密碼不一致'; return; }
-
-  const users = getAllUsers();
-  if (users[name]) { $('loginMsg').textContent = '名稱已存在，請直接登入'; return; }
-
-  const salt = randomSalt();
-  const hash = await sha256(salt + ':' + pw);
-  const isFirst = Object.keys(users).length === 0;
-
-  users[name] = { salt, hash, isAdmin: isFirst };
-  saveAllUsers(users);
-  enterUserSession(name);
-}
-
-function enterUserSession(name) {
-  currentUser = name;
-  const uData = getLocal('sw_data_' + name, null);
-  if (uData) {
-    storages = uData.storages || DEFAULT_STORAGES;
-    items = uData.items || [];
-  } else {
-    storages = JSON.parse(JSON.stringify(DEFAULT_STORAGES));
-    items = [];
-    persistUserData();
-  }
-
-  $('loginPanel').hidden = true;
-  $('appPanel').hidden = false;
-  $('userBadge').textContent = name + (getAllUsers()[name]?.isAdmin ? ' 👑' : '');
-  $('t3').hidden = !getAllUsers()[name]?.isAdmin;
-
-  refreshStorageDropdowns();
-  populateOutSelect();
-  renderInventoryList();
-  switchTab('inboundTab');
-
-  $('quickNfcLoginChk').checked = (getLocal('sw_quick_user', '') === currentUser);
-
-  // 檢查是否由 NFC 網址喚醒
-  checkNfcFromHash();
-}
-
-function persistUserData() {
-  if (!currentUser) return;
-  setLocal('sw_data_' + currentUser, { storages, items });
-}
-
-function logout() {
-  stopScanner();
-  currentUser = '';
-  storages = [];
-  items = [];
-  activeNfcStorageId = '';
-  activeNfcLocation = '';
-  showLoginScreen();
+/* ---------- 關閉所有彈窗輔助函式 ---------- */
+function closeAllModals() {
+  $('nfcHubModal').hidden = true;
+  $('simNfcModal').hidden = true;
+  $('bindNfcModal').hidden = true;
 }
 
 /* ---------- 分頁切換 ---------- */
 function switchTab(id) {
   stopScanner();
-  ['inboundTab', 'inventoryTab', 'adminTab'].forEach(t => {
+  ['inboundTab', 'inventoryTab', 'nfcTab'].forEach(t => {
     $(t).classList.toggle('on', t === id);
   });
   $('t1').classList.toggle('on', id === 'inboundTab');
   $('t2').classList.toggle('on', id === 'inventoryTab');
-  $('t3').classList.toggle('on', id === 'adminTab');
+  $('t3').classList.toggle('on', id === 'nfcTab');
 
   if (id === 'inventoryTab') renderInventoryList();
-  if (id === 'adminTab') renderAdminList();
+  if (id === 'nfcTab') renderNfcBindingsList();
 }
 
-/* ---------- 倉庫與儲位管理 ---------- */
+/* ---------- 倉庫下拉選單更新 (保證永遠有選項) ---------- */
 function refreshStorageDropdowns() {
-  const cur = $('storageSelect').value;
-  ['storageSelect', 'srcStorage', 'dstStorage', 'simStorageSelect'].forEach(id => {
+  if (!storages || !Array.isArray(storages) || !storages.length) {
+    storages = JSON.parse(JSON.stringify(DEFAULT_STORAGES));
+  }
+
+  const dropdownIds = ['storageSelect', 'srcStorage', 'dstStorage', 'simStorageSelect', 'bindStorageSelect', 'writeStorageSelect'];
+  dropdownIds.forEach(id => {
     const sel = $(id);
     if (!sel) return;
+    const oldVal = sel.value;
     sel.innerHTML = '';
     storages.forEach(s => sel.add(new Option(s.name, s.id)));
+    if (oldVal && storages.some(s => s.id === oldVal)) {
+      sel.value = oldVal;
+    } else if (sel.options.length > 0) {
+      sel.selectedIndex = 0;
+    }
   });
 
   const fSel = $('filterStorage');
-  fSel.innerHTML = '';
-  fSel.add(new Option('全部儲存庫', ''));
-  storages.forEach(s => fSel.add(new Option(s.name, s.id)));
+  if (fSel) {
+    const fOld = fSel.value;
+    fSel.innerHTML = '';
+    fSel.add(new Option('全部儲存庫', ''));
+    storages.forEach(s => fSel.add(new Option(s.name, s.id)));
+    if (fOld) fSel.value = fOld;
+  }
+}
 
-  if (cur && storages.some(s => s.id === cur)) $('storageSelect').value = cur;
+function forceResetStorages() {
+  if (confirm('確定重設倉庫清單為預設（衣櫃、工具箱、零食櫃）？存貨不會刪除。')) {
+    storages = JSON.parse(JSON.stringify(DEFAULT_STORAGES));
+    persistAppData();
+    refreshStorageDropdowns();
+    renderInventoryList();
+    alert('✅ 已重設儲存庫清單！');
+  }
 }
 
 function addNewStorage() {
@@ -734,7 +626,7 @@ function addNewStorage() {
   if (!name) return alert('請輸入儲存庫名稱');
   const id = 'store_' + Date.now();
   storages.push({ id, name });
-  persistUserData();
+  persistAppData();
   $('customStorageName').value = '';
   refreshStorageDropdowns();
   $('storageSelect').value = id;
@@ -748,7 +640,7 @@ function transferStorageItems() {
 
   let count = 0;
   items.forEach(i => { if (i.storageId === src) { i.storageId = dst; count++; } });
-  persistUserData();
+  persistAppData();
   renderInventoryList();
   alert(`✅ 已成功轉移 ${count} 項物品！`);
 }
@@ -760,7 +652,7 @@ function deleteStorageCategory() {
   if (!confirm('確定刪除此儲存庫？')) return;
 
   storages = storages.filter(s => s.id !== src);
-  persistUserData();
+  persistAppData();
   refreshStorageDropdowns();
 }
 
@@ -809,7 +701,7 @@ function saveItem(e) {
     items.push({ id: Date.now(), ...data });
   }
 
-  persistUserData();
+  persistAppData();
   const isEdit = !!editingItemId;
   resetItemForm();
   renderInventoryList();
@@ -861,7 +753,7 @@ function startEditItem(id) {
 function deleteItem(id) {
   if (!confirm('確定徹底刪除此物品記錄？')) return;
   items = items.filter(i => i.id !== id);
-  persistUserData();
+  persistAppData();
   renderInventoryList();
   populateOutSelect();
 }
@@ -902,7 +794,7 @@ function doOutbound() {
     $('outResult').textContent = `✅ 「${it.name}」已出庫 ${n}，剩餘 ${it.qty}`;
   }
 
-  persistUserData();
+  persistAppData();
   populateOutSelect();
   renderInventoryList();
   $('outQty').value = 1;
@@ -998,14 +890,11 @@ function quickOutOne(id) {
   } else {
     it.qty -= 1;
   }
-  persistUserData();
+  persistAppData();
   renderInventoryList();
 }
 
 /* ---------- NFC 解析、導航與直達特定倉庫 ---------- */
-function hexEncode(str) {
-  return [...new TextEncoder().encode(str)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
 function hexDecode(hex) {
   try {
     const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
@@ -1030,6 +919,7 @@ function checkNfcFromHash() {
 }
 
 function openNfcHubModal(sName, loc) {
+  closeAllModals(); // 確保不會重疊
   $('hubStorageTitle').textContent = sName;
   $('hubLocationTitle').textContent = loc ? `📍 儲位編號：${loc}` : '';
 
@@ -1098,8 +988,9 @@ function clearNfc() {
   renderInventoryList();
 }
 
-/* 模擬接觸 NFC 標籤 */
+/* ---------- 模擬接觸 NFC 標籤 ---------- */
 function openSimulateNfcModal() {
+  closeAllModals();
   refreshStorageDropdowns();
   $('simNfcModal').hidden = false;
 }
@@ -1116,57 +1007,166 @@ function executeSimulatedNfc() {
   openNfcHubModal(sName, loc);
 }
 
-/* Web NFC API 標籤寫入與產生 */
-function generateNfcUrl() {
-  const base = ($('nfcBaseUrl').value.trim() || location.origin + location.pathname).split('#')[0];
-  const sid = $('storageSelect').value;
-  const loc = $('itemLoc').value.trim();
-  const url = `${base}#nfc-${sid.replace(/_/g, '-')}${loc ? '--' + hexEncode(loc) : ''}`;
-
-  const box = $('nfcUrlResult');
-  box.value = url;
-  box.hidden = false;
-  box.select();
-  try { navigator.clipboard.writeText(url); } catch(e){}
-
-  $('nfcWriteBtn').hidden = !('NDEFReader' in window);
-  $('nfcStatusMsg').textContent = '✅ NFC 標籤網址已產生（已複製），可用於寫入 NFC 貼紙！';
+/* ---------- 🏷️ NFC 貼紙卡號／號碼綁定核心功能 ---------- */
+function openNfcBindingModal(prefillTagId = '') {
+  closeAllModals();
+  refreshStorageDropdowns();
+  $('bindTagIdInput').value = prefillTagId;
+  $('bindLocationInput').value = activeNfcLocation || '抽屜-A1';
+  $('bindNoteInput').value = '';
+  $('readTagIdMsg').textContent = '';
+  $('bindNfcModal').hidden = false;
 }
+function closeNfcBindingModal() { $('bindNfcModal').hidden = true; }
 
-async function writeNfcTag() {
-  const url = $('nfcUrlResult').value;
-  if (!url) return;
+// 手機碰 NFC 貼紙讀取卡號 UID
+async function readTagIdViaNfc() {
+  if (!('NDEFReader' in window)) {
+    $('readTagIdMsg').textContent = '⚠️ 此瀏覽器不支援 Web NFC，請直接手動填寫貼紙號碼（例如：貼紙-01 或 卡號）';
+    return;
+  }
   try {
+    $('readTagIdMsg').textContent = '⏳ 請將手機靠近實體 NFC 貼紙…';
     const ndef = new NDEFReader();
-    await ndef.write({ records: [{ recordType: 'url', data: url }] });
-    alert('✅ NFC 標籤寫入成功！');
+    await ndef.scan();
+    ndef.onreading = event => {
+      const serial = event.serialNumber || '';
+      if (serial) {
+        $('bindTagIdInput').value = serial;
+        $('readTagIdMsg').textContent = `✅ 已成功讀取貼紙卡號：${serial}`;
+      } else {
+        $('readTagIdMsg').textContent = `✅ 貼紙感應成功！`;
+      }
+    };
   } catch(e) {
-    alert('❌ 寫入失敗：' + (e.message || e));
+    $('readTagIdMsg').textContent = '❌ 感應逾時或未獲授權，可手動輸入貼紙號碼';
   }
 }
 
-/* 實體 Web NFC 掃描監聽（手機接觸時） */
+function saveNfcBinding() {
+  const tagId = $('bindTagIdInput').value.trim();
+  const storageId = $('bindStorageSelect').value;
+  const location = $('bindLocationInput').value.trim();
+  const note = $('bindNoteInput').value.trim();
+
+  if (!tagId) return alert('請輸入或感應 NFC 貼紙號碼／卡號！');
+  if (!storageId) return alert('請選擇要綁定的倉庫！');
+
+  nfcBindings[tagId] = { storageId, location, note };
+  persistAppData();
+  closeNfcBindingModal();
+  renderNfcBindingsList();
+  alert(`✅ 成功綁定！貼紙「${tagId}」已對應至「${storages.find(s=>s.id===storageId)?.name}」`);
+}
+
+function deleteNfcBinding(tagId) {
+  if (!confirm(`確定解除貼紙號碼「${tagId}」的綁定？`)) return;
+  delete nfcBindings[tagId];
+  persistAppData();
+  renderNfcBindingsList();
+}
+
+function testNfcBinding(tagId) {
+  const b = nfcBindings[tagId];
+  if (!b) return;
+  activeNfcStorageId = b.storageId;
+  activeNfcLocation = b.location;
+  const sName = storages.find(s=>s.id===b.storageId)?.name || '倉庫';
+  openNfcHubModal(sName, b.location);
+}
+
+function renderNfcBindingsList() {
+  const box = $('nfcBindingsList');
+  if (!box) return;
+  const keys = Object.keys(nfcBindings);
+  if (!keys.length) {
+    box.innerHTML = '<p class="hint" style="text-align:center; padding:12px;">尚未綁定任何 NFC 貼紙號碼，點擊上方按鈕開始綁定！</p>';
+    return;
+  }
+
+  box.innerHTML = keys.map(tid => {
+    const b = nfcBindings[tid];
+    const sName = storages.find(s=>s.id===b.storageId)?.name || '未分類';
+    return `<div class="tag-item">
+      <div>
+        <div style="font-weight:700; color:var(--pri);">🏷️ ${tid}</div>
+        <div style="font-size:12px; color:var(--mu);">對應：${sName} ${b.location ? '/ ' + b.location : ''} ${b.note ? '(' + b.note + ')' : ''}</div>
+      </div>
+      <div class="row">
+        <button class="ok" onclick="testNfcBinding('${tid}')" style="min-height:32px; font-size:12px; padding:4px 8px;">感應直達</button>
+        <button class="bad" onclick="deleteNfcBinding('${tid}')" style="min-height:32px; font-size:12px; padding:4px 8px;">刪除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* 寫入專屬 URL 到實體 NFC 貼紙 */
+async function writeNfcUrlToTag() {
+  const sid = $('writeStorageSelect').value;
+  const loc = $('writeLocInput').value.trim();
+  const url = `${location.origin}${location.pathname}#nfc-${sid.replace(/_/g, '-')}${loc ? '--' + hexEncode(loc) : ''}`;
+
+  if (!('NDEFReader' in window)) {
+    return alert('此瀏覽器不支援 Web NFC 寫入功能，請使用 NFC Tools App 寫入此網址：\n' + url);
+  }
+
+  try {
+    $('writeNfcFeedback').textContent = '⏳ 請將實體 NFC 貼紙貼在手機背部…';
+    const ndef = new NDEFReader();
+    await ndef.write({ records: [{ recordType: 'url', data: url }] });
+    $('writeNfcFeedback').textContent = '✅ NFC 貼紙寫入成功！';
+    alert('✅ NFC 貼紙寫入成功！下次手機碰此貼紙將直接進入該倉庫。');
+  } catch(e) {
+    $('writeNfcFeedback').textContent = '❌ 寫入失敗：' + (e.message || e);
+  }
+}
+
+/* ---------- 實體 Web NFC 全天候掃描監聽 ---------- */
 async function startWebNfcListening() {
   if ('NDEFReader' in window) {
     try {
       const ndef = new NDEFReader();
       await ndef.scan();
       ndef.onreading = event => {
+        const serial = event.serialNumber || '';
+
+        // 1. 優先檢查是否為已綁定的貼紙號碼／UID
+        if (serial && nfcBindings[serial]) {
+          const b = nfcBindings[serial];
+          activeNfcStorageId = b.storageId;
+          activeNfcLocation = b.location;
+          const sName = storages.find(s=>s.id===b.storageId)?.name || '倉庫';
+          openNfcHubModal(sName, b.location);
+          return;
+        }
+
+        // 2. 檢查 NDEF 內容中是否含有倉庫標籤網址
         for (const record of event.message.records) {
           if (record.recordType === 'url') {
             const url = new TextDecoder().decode(record.data);
             if (url.includes('#nfc-')) {
               location.hash = url.substring(url.indexOf('#'));
               checkNfcFromHash();
-              break;
+              return;
             }
+          }
+        }
+
+        // 3. 若為新貼紙，貼心詢問是否立即綁定
+        if (serial) {
+          if (confirm(`📲 感應到新 NFC 貼紙（卡號：${serial}）！\n是否要立即將此貼紙號碼綁定到某個倉庫？`)) {
+            openNfcBindingModal(serial);
           }
         }
       };
     } catch(e) {
-      console.warn('Web NFC 監聽未啟動:', e);
+      console.warn('Web NFC 啟動提示:', e);
     }
   }
+}
+
+function hexEncode(str) {
+  return [...new TextEncoder().encode(str)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /* 條碼掃描與 OpenFoodFacts 查詢 */
@@ -1192,7 +1192,7 @@ function startScanner(mode) {
     () => {}
   ).catch(err => {
     qrScannerActive = false;
-    alert('相機啟動失敗：請允許相機權限或直接手動輸入條碼。');
+    alert('相機啟動失敗：請確認已允許相機權限，或直接輸入條碼。');
   });
 }
 
@@ -1226,10 +1226,10 @@ async function lookupBarcode(code) {
 
 /* 備份匯出與匯入 */
 function exportDataJson() {
-  const blob = new Blob([JSON.stringify({ user: currentUser, storages, items }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ storages, items, nfcBindings }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `inventory-${currentUser}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `smart-warehouse-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
 }
 
@@ -1244,9 +1244,11 @@ function importDataJson(e) {
       if (!confirm(`匯入將覆蓋目前資料（共 ${parsed.items.length} 件物品），確定？`)) return;
       items = parsed.items;
       if (parsed.storages && parsed.storages.length) storages = parsed.storages;
-      persistUserData();
+      if (parsed.nfcBindings) nfcBindings = parsed.nfcBindings;
+      persistAppData();
       refreshStorageDropdowns();
       renderInventoryList();
+      renderNfcBindingsList();
       alert('✅ 資料匯入成功！');
     } catch(err) {
       alert('❌ 檔案格式不符合 JSON 規範');
@@ -1255,71 +1257,16 @@ function importDataJson(e) {
   reader.readAsText(f);
 }
 
-function toggleQuickLogin(cb) {
-  if (cb.checked) {
-    setLocal('sw_quick_user', currentUser);
-  } else {
-    localStorage.removeItem('sw_quick_user');
-  }
-}
-
-/* 管理員帳號列表 */
-function renderAdminList() {
-  const users = getAllUsers();
-  const box = $('adminUserList');
-  box.innerHTML = '';
-
-  Object.keys(users).forEach(name => {
-    const isMe = name === currentUser;
-    const u = users[name];
-    const div = document.createElement('div');
-    div.className = 'item';
-    div.style.marginTop = '6px';
-    div.innerHTML = `<div class="th" style="font-weight:bold; font-size:18px;">${name[0]}</div>
-      <div class="info">
-        <b>${name}</b> ${u.isAdmin ? '👑 管理員' : ''} ${isMe ? '（目前登入）' : ''}
-      </div>`;
-    if (!isMe) {
-      const delBtn = document.createElement('button');
-      delBtn.className = 'bad';
-      delBtn.textContent = '刪除帳號';
-      delBtn.onclick = () => deleteUserAccount(name);
-      div.appendChild(delBtn);
-    }
-    box.appendChild(div);
-  });
-}
-
-async function deleteUserAccount(targetName) {
-  const pw = $('adminConfirmPw').value;
-  if (!pw) return alert('請先輸入管理員密碼以確認授權');
-  const users = getAllUsers();
-  const me = users[currentUser];
-  const hash = await sha256(me.salt + ':' + pw);
-  if (hash !== me.hash) return alert('管理員密碼驗證失敗！');
-
-  if (!confirm(`確定永久刪除使用者「${targetName}」及其所有資料？`)) return;
-  delete users[targetName];
-  saveAllUsers(users);
-  localStorage.removeItem('sw_data_' + targetName);
-  $('adminConfirmPw').value = '';
-  renderAdminList();
-  alert(`✅ 已刪除使用者 ${targetName}`);
-}
-
-/* 初始化啟動 */
+/* 初始化啟動：確保資料庫與下拉選單完整準備好 */
 window.addEventListener('DOMContentLoaded', () => {
-  $('nfcBaseUrl').value = location.origin + location.pathname;
-  window.addEventListener('hashchange', checkNfcFromHash);
+  loadAppData();
+  refreshStorageDropdowns();
+  populateOutSelect();
+  renderInventoryList();
+  renderNfcBindingsList();
 
-  // 檢查是否有免密碼快速登入
-  const quick = getLocal('sw_quick_user', '');
-  const allU = getAllUsers();
-  if (quick && allU[quick]) {
-    enterUserSession(quick);
-  } else {
-    showLoginScreen();
-  }
+  window.addEventListener('hashchange', checkNfcFromHash);
+  checkNfcFromHash();
 
   startWebNfcListening();
 });

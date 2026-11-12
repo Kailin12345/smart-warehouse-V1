@@ -142,6 +142,12 @@ button:disabled{opacity:.55}
     <div id="list"></div>
     <div class="tools"><button class="ghost" onclick="exportData()">⬇ 匯出備份</button><button class="ghost" onclick="document.getElementById('imp').click()">⬆ 匯入備份</button></div>
     <input type="file" id="imp" accept="application/json" hidden onchange="importData(event)">
+    <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600;font-size:14px">🔑 變更我的密碼</summary>
+      <label>目前密碼</label><input type="password" id="cpOld" autocomplete="current-password">
+      <label>新密碼（至少 4 碼）</label><input type="password" id="cpNew" autocomplete="new-password">
+      <label>再次輸入新密碼</label><input type="password" id="cpNew2" autocomplete="new-password">
+      <button type="button" class="full" onclick="changePw()">更新密碼</button><div id="cpMsg" class="msg" role="alert"></div>
+    </details>
   </div>
 
   <div id="adminTab" class="tc">
@@ -175,7 +181,7 @@ async function seal(o){const iv=crypto.getRandomValues(new Uint8Array(12));const
 async function open(r){return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(r.iv)},KEY,unb64(r.ct))))}
 function persist(){const u=user;return wq=wq.then(async()=>{if(KEY&&u)lset('inv_data_'+u,await seal({items,storages}))}).catch(()=>alert('⚠️ 加密儲存失敗'))}
 async function upgrade(n,pw){/* 舊版（明文／SHA-256）帳號升級並加密既有資料 */
-  const salt=rnd(),bits=await kdf(pw,salt),u=users();u[n]={v:2,salt,vf:b64(bits.slice(32))};saveUsers(u);await setKey(bits);
+  const salt=rnd(),bits=await kdf(pw,salt),u=users();u[n]={v:2,salt,vf:b64(bits.slice(32)),admin:!!(u[n]&&u[n].admin)};saveUsers(u);await setKey(bits);
   user=n;items=lget('items_'+n,[]);storages=lget('storages_'+n,null)||JSON.parse(JSON.stringify(DEF));await persist();
   try{localStorage.removeItem('items_'+n);localStorage.removeItem('storages_'+n)}catch(e){}}
 function bump(){clearTimeout(idle);if(user)idle=setTimeout(logout,300000)}
@@ -360,8 +366,23 @@ function isAdmin(){return !!(users()[user]||{}).admin}
 function renderAdmin(){const u=users(),box=$('uAdmList');box.innerHTML='';
   Object.keys(u).forEach(n=>{const d=document.createElement('div');d.className='item';
     d.innerHTML='<span class="av">'+esc([...n][0]||'?')+'</span><div class="info"><strong>'+esc(n)+'</strong>'+(u[n].admin?' 👑 管理員':'')+(n===user?'（目前登入）':'')+'</div>';
-    if(n!==user){const b=document.createElement('button');b.className='bad';b.textContent='刪除';b.onclick=()=>delUser(n);d.appendChild(b)}
+    if(n!==user){const r=document.createElement('button');r.textContent=u[n].admin?'取消管理員':'設為管理員';r.className='ghost';r.style.fontSize='12px';r.onclick=()=>setAdmin(n,!u[n].admin);d.appendChild(r);const b=document.createElement('button');b.className='bad';b.textContent='刪除';b.onclick=()=>delUser(n);d.appendChild(b)}
     box.appendChild(d)})}
+async function changePw(){
+  const o=$('cpOld').value,n=$('cpNew').value,m=$('cpMsg'),u=users(),me=u[user];m.className='msg';
+  if(!me||me.v!==2||b64((await kdf(o,me.salt)).slice(32))!==me.vf){m.textContent='❌ 目前密碼錯誤';return}
+  if(n.length<4){m.textContent='新密碼至少 4 碼';return}
+  if(n!==$('cpNew2').value){m.textContent='兩次新密碼不一致';return}
+  await wq;const oldKey=KEY,salt=rnd(),bits=await kdf(n,salt);await setKey(bits);
+  try{const blob=await seal({items,storages});if(!lset('inv_data_'+user,blob))throw 0;
+    me.salt=salt;me.vf=b64(bits.slice(32));saveUsers(u)}
+  catch(e){KEY=oldKey;m.textContent='❌ 更新失敗，密碼未變更';return}
+  ['cpOld','cpNew','cpNew2'].forEach(i=>$(i).value='');m.textContent='✅ 密碼已更新，資料已用新密碼重新加密';m.className='msg good'}
+async function setAdmin(n,f){
+  const m=$('admMsg'),u=users(),me=u[user];m.className='msg';
+  if(!me||!me.admin||n===user||!u[n])return;
+  if(me.v!==2||b64((await kdf($('admPw').value,me.salt)).slice(32))!==me.vf){m.textContent='❌ 管理員密碼錯誤';return}
+  u[n].admin=f;saveUsers(u);$('admPw').value='';m.textContent='✅ 已更新「'+n+'」的權限';m.className='msg good';renderAdmin()}
 async function delUser(n){
   const m=$('admMsg'),u=users(),me=u[user];m.className='msg';
   if(!me||!me.admin||n===user||!u[n])return;

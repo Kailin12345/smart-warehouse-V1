@@ -78,6 +78,7 @@ button:disabled{opacity:.55}
     <label>再次輸入密碼</label><input type="password" id="regPw2" autocomplete="new-password" required>
     <button class="full ok" type="submit">註冊並登入</button>
   </form>
+  <div id="nfcNote" class="hint" hidden>📲 偵測到 NFC 倉庫標籤，登入後將直接顯示該倉庫。</div>
   <div id="loginMsg" class="msg" role="alert"></div>
   <p class="hint">🔒 資料以 AES-256-GCM 加密後存於本機，金鑰由密碼經 PBKDF2 衍生，不會存放在裝置上。忘記密碼將無法復原資料；閒置 5 分鐘或重新整理頁面會自動登出。請定期匯出備份。</p>
 </div>
@@ -86,6 +87,8 @@ button:disabled{opacity:.55}
 <div id="app" class="panel" hidden>
   <h1>📦 智慧儲存庫與食品管理</h1>
   <div class="bar"><div>👤 <b id="uname"></b></div><div class="row"><button class="ghost" onclick="logout()">登出</button></div></div>
+  <div id="nfcBar" class="card" hidden style="border-color:var(--pri)"><div id="nfcTitle" style="font-weight:700"></div><div id="nfcInfo" class="hint"></div>
+    <div class="row"><button class="ok" style="flex:1" onclick="nfcGo('in')">📥 入庫</button><button class="warn" style="flex:1" onclick="nfcGo('out')">📤 出庫</button><button style="flex:1" onclick="nfcGo('list')">📋 內容</button><button class="ghost" onclick="nfcClear()">✕</button></div></div>
   <div class="tabs"><button id="t1" class="on" onclick="tab('formTab')">📝 物品入庫</button><button id="t2" onclick="tab('listTab')">📋 庫存清單</button><button id="t3" onclick="tab('adminTab')" hidden>👑 管理</button></div>
 
   <div id="formTab" class="tc on">
@@ -112,6 +115,11 @@ button:disabled{opacity:.55}
           <label>轉移到</label>
           <div class="row"><select id="dstSel"></select><button type="button" class="pur" onclick="transfer()" style="white-space:nowrap">轉移</button></div>
           <button type="button" class="bad full" onclick="delStorage()">刪除來源倉庫（物品需先轉移）</button>
+          <label>📲 NFC 標籤網址（依上方「來源倉庫」與儲位編號）</label>
+          <input id="nfcBase" placeholder="本頁網址 https://...">
+          <button type="button" class="pur full" onclick="nfcUrl()">產生 NFC 標籤網址</button>
+          <input id="nfcUrlBox" readonly hidden><button type="button" id="nfcWrite" class="ok full" onclick="nfcWrite()" hidden>寫入 NFC 標籤</button><div id="nfcMsg" class="hint"></div>
+          <button type="button" class="ghost full" onclick="nfcAll()">一次列出「全部倉庫」的標籤網址</button><div id="nfcAll"></div>
         </details>
       </div>
       <div class="card">
@@ -142,6 +150,9 @@ button:disabled{opacity:.55}
     <div id="list"></div>
     <div class="tools"><button class="ghost" onclick="exportData()">⬇ 匯出備份</button><button class="ghost" onclick="document.getElementById('imp').click()">⬆ 匯入備份</button></div>
     <input type="file" id="imp" accept="application/json" hidden onchange="importData(event)">
+    <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600;font-size:14px">⚡ NFC 快速登入</summary>
+      <label class="chk"><input type="checkbox" id="quickChk" onchange="toggleQuick(this)"> 此裝置碰觸 NFC 標籤時免密碼登入</label>
+      <p class="hint">啟用後，這支手機開啟含倉庫標籤的網址就會直接進入你的帳號。金鑰以「不可匯出」形式存在本機，手機遠失或借人前請先關閉。登出不會關閉此功能。</p></details>
     <details class="card" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600;font-size:14px">🔑 變更我的密碼</summary>
       <label>目前密碼</label><input type="password" id="cpOld" autocomplete="current-password">
       <label>新密碼（至少 4 碼）</label><input type="password" id="cpNew" autocomplete="new-password">
@@ -165,7 +176,7 @@ button:disabled{opacity:.55}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const DEF=[{id:'wardrobe',name:'🧥 臥室衣櫃'},{id:'toolbox',name:'🔧 工具箱'},{id:'pantry',name:'🍫 零食雜物櫃'}];
-let KEY=null,wq=Promise.resolve(),idle,fails=0,lockUntil=0,user='',items=[],storages=[],photo='',editId=null,model=null,scanner=null,scanning=false,selUser='',mode='in';
+let KEY=null,wq=Promise.resolve(),idle,fails=0,lockUntil=0,user='',items=[],nfcStore='',nfcLoc='',storages=[],photo='',editId=null,model=null,scanner=null,scanning=false,selUser='',mode='in';
 
 /* ---------- 儲存（含錯誤處理） ---------- */
 function lget(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
@@ -236,8 +247,7 @@ async function enter(n){
   fillOut();bump();const au=users();if(au[n]&&!Object.values(au).some(x=>x.admin)){au[n].admin=true;saveUsers(au)}$('t3').hidden=!isAdmin();
   $('login').hidden=true;$('app').hidden=false;$('uname').textContent=n;
   fillStores();resetForm();tab('formTab');
-  const p=new URLSearchParams(location.search);if(p.get('storage')&&storages.some(s=>s.id===p.get('storage')))$('storageSel').value=p.get('storage');
-  if(p.get('loc'))$('loc').value=p.get('loc');
+  qGet().then(q=>$('quickChk').checked=!!q&&q.user===user);applyNfc();
 }
 function logout(){stopScan();clearTimeout(idle);user='';KEY=null;items=[];storages=[];$('loginPw').value='';showLogin()}
 
@@ -317,13 +327,13 @@ function saveItem(e){
 }
 function resetForm(keep){editId=null;$('itemForm').reset();photo='';$('preview').style.display='none';$('preview').removeAttribute('src');
   $('f3').textContent='3. 詳細資訊與有效期限';$('saveBtn').textContent='💾 儲存入庫';$('cancelEdit').hidden=true;$('aiMsg').textContent='';
-  if(keep)$('storageSel').value=keep}
+  if(keep)$('storageSel').value=keep;if(nfcLoc)$('loc').value=nfcLoc}
 function editItem(id){const it=items.find(i=>i.id===id);if(!it)return;editId=id;tab('formTab');
   $('storageSel').value=it.storageId;$('loc').value=it.location||'';$('barcode').value=it.barcode||'';$('name').value=it.name;$('exp').value=it.expiryDate||'';$('qty').value=it.qty;
   photo='';if(it.photo){$('preview').src=it.photo;$('preview').style.display='block'}
   $('f3').textContent='✏️ 編輯物品';$('saveBtn').textContent='💾 更新物品';$('cancelEdit').hidden=false;window.scrollTo({top:0,behavior:'smooth'})}
 function fillOut(){const s=$('outSel'),q=$('outQ').value.trim().toLowerCase(),cur=s.value;s.innerHTML='';
-  items.map(i=>({i,k:expStatus(i.expiryDate).k})).filter(x=>!q||x.i.name.toLowerCase().includes(q)).sort((a,b)=>a.k-b.k)
+  items.map(i=>({i,k:expStatus(i.expiryDate).k})).filter(x=>(!nfcStore||x.i.storageId===nfcStore)&&(!q||x.i.name.toLowerCase().includes(q))).sort((a,b)=>a.k-b.k)
    .forEach(({i})=>{const st=storages.find(x=>x.id===i.storageId);s.add(new Option(i.name+'｜剩 '+i.qty+'｜'+(st?st.name:'?'),i.id))});
   if(!s.options.length)s.add(new Option('（沒有可出庫的物品）',''));else if([...s.options].some(o=>o.value===cur))s.value=cur}
 function outItem(){const id=+$('outSel').value,it=items.find(i=>i.id===id),m=$('outMsg');
@@ -342,7 +352,7 @@ function expStatus(d){if(!d)return{k:9999,cls:'',t:'無'};
   if(days<=7)return{k:days,cls:'soon',t:esc(d)+' <span class="tag-s">（剩 '+days+' 天）</span>'};
   return{k:days,cls:'',t:esc(d)}}
 function render(){
-  fillOut();const box=$('list'),fs=$('fStore').value,q=$('fText').value.trim().toLowerCase();
+  fillOut();showNfc();const box=$('list'),fs=$('fStore').value,q=$('fText').value.trim().toLowerCase();
   const all=items.map(i=>({i,s:expStatus(i.expiryDate)}));
   $('cE').textContent=all.filter(x=>x.s.cls==='expired').length;$('cS').textContent=all.filter(x=>x.s.cls==='soon').length;$('cA').textContent=items.length;
   const rows=all.filter(x=>(!fs||x.i.storageId===fs)&&(!q||[x.i.name,x.i.location,x.i.barcode].join(' ').toLowerCase().includes(q))).sort((a,b)=>a.s.k-b.s.k);
@@ -352,8 +362,48 @@ function render(){
     return '<div class="item '+s.cls+'">'+th+'<div class="info"><strong>'+esc(i.name)+'</strong>（數量 <strong>'+esc(i.qty)+'</strong>）<br>📍 '+esc(st?st.name:'未知分類')+(i.location?' / '+esc(i.location):'')+'<br>⏳ '+s.t+'</div>'+
     '<div class="acts"><button onclick="editItem('+i.id+')">編輯</button><button class="bad" onclick="delItem('+i.id+')">刪除</button></div></div>'}).join('')}
 
+/* ---------- NFC 倉庫標籤（網址 #nfc-倉庫ID--儲位的十六進位編碼） ---------- */
+const hex=s=>[...enc.encode(s)].map(x=>x.toString(16).padStart(2,'0')).join('');
+function nfcParse(){const h=location.hash.slice(1);if(h.indexOf('nfc-')!==0)return null;
+  const [sid,l]=h.slice(4).split('--');let loc='';try{if(l)loc=dec.decode(Uint8Array.from(l.match(/../g).map(x=>parseInt(x,16))))}catch(e){}return{sid,loc}}
+function applyNfc(){const nf=nfcParse(),s=nf&&storages.find(x=>x.id.replace(/_/g,'-')===nf.sid);
+  nfcStore=s?s.id:'';nfcLoc=s?nf.loc:'';fillOut();showNfc();
+  if(s){$('storageSel').value=s.id;if(nfcLoc)$('loc').value=nfcLoc;nfcGo('list')}else $('fStore').value=''}
+function showNfc(){const b=$('nfcBar');if(!nfcStore){b.hidden=true;return}
+  const st=storages.find(s=>s.id===nfcStore),l=items.filter(i=>i.storageId===nfcStore),soon=l.filter(i=>expStatus(i.expiryDate).k<=7).length;
+  $('nfcTitle').textContent='📍 '+(st?st.name:'')+(nfcLoc?' / '+nfcLoc:'');
+  $('nfcInfo').textContent='共 '+l.length+' 項物品'+(soon?'，其中 '+soon+' 項已過期或 7 天內到期':'');b.hidden=false}
+function nfcGo(m){if(m==='list'){$('fStore').value=nfcStore;tab('listTab');return}
+  tab('formTab');if(nfcStore)$('storageSel').value=nfcStore;(m==='in'?$('itemForm'):$('outSel')).scrollIntoView({behavior:'smooth'})}
+function nfcClear(){nfcStore='';nfcLoc='';location.hash='';showNfc();fillOut();$('fStore').value='';render()}
+function nfcUrl(){const base=$('nfcBase').value.trim().split('#')[0],loc=$('loc').value.trim();
+  if(!base){$('nfcMsg').textContent='請先填入本頁網址';return}
+  lset('nfc_base',base);const u=base+'#nfc-'+$('srcSel').value.replace(/_/g,'-')+(loc?'--'+hex(loc):'');
+  const b=$('nfcUrlBox');b.value=u;b.hidden=false;b.select();try{navigator.clipboard.writeText(u)}catch(e){}
+  $('nfcWrite').hidden=!('NDEFReader' in window);$('nfcMsg').textContent='網址已產生（已嘗試複製）。可用「NFC Tools」等 App 寫入標籤的「網址／URL」記錄。'}
+function nfcAll(){const base=$('nfcBase').value.trim().split('#')[0],box=$('nfcAll');box.innerHTML='';
+  if(!base){$('nfcMsg').textContent='請先填入本頁網址';return}
+  lset('nfc_base',base);
+  storages.forEach(s=>{const u=base+'#nfc-'+s.id.replace(/_/g,'-'),d=document.createElement('div');d.className='card';d.style.marginTop='8px';
+    d.innerHTML='<b>'+esc(s.name)+'</b>';const i=document.createElement('input');i.readOnly=true;i.value=u;d.appendChild(i);
+    const r=document.createElement('div');r.className='row';
+    const c=document.createElement('button');c.type='button';c.textContent='複製';c.onclick=()=>{i.select();try{navigator.clipboard.writeText(u)}catch(e){}c.textContent='已複製'};r.appendChild(c);
+    if('NDEFReader' in window){const w=document.createElement('button');w.type='button';w.className='ok';w.textContent='寫入標籤';
+      w.onclick=async()=>{try{await new NDEFReader().write({records:[{recordType:'url',data:u}]});w.textContent='✅ 完成'}catch(e){w.textContent='❌ 失敗，再試'}};r.appendChild(w)}
+    d.appendChild(r);box.appendChild(d)})}
+async function nfcWrite(){try{await new NDEFReader().write({records:[{recordType:'url',data:$('nfcUrlBox').value}]});$('nfcMsg').textContent='✅ 寫入完成'}catch(e){$('nfcMsg').textContent='❌ 寫入失敗：'+(e.message||e)}}
+
+/* ---------- NFC 快速登入（不可匯出的金鑰存 IndexedDB） ---------- */
+function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('inv_q',1);r.onupgradeneeded=()=>r.result.createObjectStore('k');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function qGet(){try{const d=await idb();return await new Promise(res=>{const g=d.transaction('k').objectStore('k').get('q');g.onsuccess=()=>res(g.result||null);g.onerror=()=>res(null)})}catch(e){return null}}
+async function qSet(v){try{const d=await idb();await new Promise((res,rej)=>{const t=d.transaction('k','readwrite');v?t.objectStore('k').put(v,'q'):t.objectStore('k').delete('q');t.oncomplete=res;t.onerror=()=>rej(t.error)});return true}catch(e){return false}}
+async function toggleQuick(cb){
+  if(!cb.checked){await qSet(null);return}
+  if(!confirm('啟用後，這支手機碰 NFC 標籤即可免密碼進入你的帳號（僅限一個帳號）。確定？')||!(await qSet({user,key:KEY}))){cb.checked=false;return}}
+async function tryQuick(){if(!nfcParse())return;const q=await qGet();if(!q||!users()[q.user])return;KEY=q.key;await enter(q.user)}
+
 /* ---------- 條碼出庫 ---------- */
-function scanOut(code){const m=$('outMsg'),ms=items.filter(i=>i.barcode===code);
+function scanOut(code){const m=$('outMsg'),ms=items.filter(i=>i.barcode===code&&(!nfcStore||i.storageId===nfcStore));
   if(!code)return;
   if(!ms.length){m.textContent='❌ 庫存中找不到條碼 '+code;return}
   const it=ms.sort((a,b)=>expStatus(a.expiryDate).k-expStatus(b.expiryDate).k)[0];
@@ -377,6 +427,7 @@ async function changePw(){
   try{const blob=await seal({items,storages});if(!lset('inv_data_'+user,blob))throw 0;
     me.salt=salt;me.vf=b64(bits.slice(32));saveUsers(u)}
   catch(e){KEY=oldKey;m.textContent='❌ 更新失敗，密碼未變更';return}
+  const q=await qGet();if(q&&q.user===user)await qSet({user,key:KEY});
   ['cpOld','cpNew','cpNew2'].forEach(i=>$(i).value='');m.textContent='✅ 密碼已更新，資料已用新密碼重新加密';m.className='msg good'}
 async function setAdmin(n,f){
   const m=$('admMsg'),u=users(),me=u[user];m.className='msg';
@@ -388,7 +439,7 @@ async function delUser(n){
   if(!me||!me.admin||n===user||!u[n])return;
   if(me.v!==2||b64((await kdf($('admPw').value,me.salt)).slice(32))!==me.vf){m.textContent='❌ 管理員密碼錯誤';return}
   if(!confirm('確定永久刪除使用者「'+n+'」及其所有資料？'))return;
-  delete u[n];saveUsers(u);
+  delete u[n];saveUsers(u);qGet().then(q=>{if(q&&q.user===n)qSet(null)});
   const old=lget('app_users_secure',{});delete old[n];lset('app_users_secure',old);
   try{['inv_data_','items_','storages_'].forEach(p=>localStorage.removeItem(p+n))}catch(e){}
   $('admPw').value='';m.textContent='✅ 已刪除「'+n+'」';m.className='msg good';renderAdmin()}
@@ -404,7 +455,9 @@ function importData(e){const f=e.target.files[0];if(!f)return;const r=new FileRe
 
 /* ---------- 啟動 ---------- */
 try{localStorage.removeItem('inv_remember')}catch(e){}
-showLogin();loadModel();
+$('nfcBase').value=(/^https?:$/.test(location.protocol)&&!/claude|anthropic/i.test(location.hostname))?location.origin+location.pathname:lget('nfc_base','https://claude.ai/artifact/M4Jk4Z4uf9G2FhsLNswy8q');$('nfcNote').hidden=!nfcParse();
+addEventListener('hashchange',()=>{$('nfcNote').hidden=!nfcParse();user?applyNfc():tryQuick()});
+showLogin();loadModel();tryQuick();
 </script>
 </body>
 </html>

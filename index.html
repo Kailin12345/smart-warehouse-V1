@@ -281,6 +281,11 @@
 
       // 互動彈窗狀態
       const [activeWarehouse, setActiveWarehouse] = useState(null); // 當前打開的倉庫看板
+      const [warehouseHubTab, setWarehouseHubTab] = useState('inventory'); // 'inventory' | 'inbound' | 'settings'
+      const [unboundUidChoice, setUnboundUidChoice] = useState(null); // 未綁定貼紙選擇視窗
+      const [quickInboundForm, setQuickInboundForm] = useState({ name: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
+      const [transferSearch, setTransferSearch] = useState("");
+      const [warehouseEditForm, setWarehouseEditForm] = useState({ name: "", nfc_uid: "", icon: "📦", description: "" });
       const [isScanningNFC, setIsScanningNFC] = useState(false);
       const [showSimulator, setShowSimulator] = useState(false);
       const [showBackupModal, setShowBackupModal] = useState(false);
@@ -295,6 +300,19 @@
       const [checkoutItem, setCheckoutItem] = useState(null);
       const [transferItem, setTransferItem] = useState(null);
       const [toastMsg, setToastMsg] = useState(null);
+
+      useEffect(() => {
+        if (activeWarehouse) {
+          setWarehouseHubTab('inventory');
+          setWarehouseEditForm({
+            name: activeWarehouse.name || "",
+            nfc_uid: activeWarehouse.nfc_uid || "",
+            icon: activeWarehouse.icon || "📦",
+            description: activeWarehouse.description || ""
+          });
+          setTransferSearch("");
+        }
+      }, [activeWarehouse?.id]);
 
       // 保存至 localStorage
       useEffect(() => {
@@ -371,10 +389,9 @@
           return;
         }
 
-        // 優先度 3: 未綁定貼紙 -> 引導建立
-        setCreateWarehouseUid(cleanUid);
-        setShowCreateWarehouseModal(true);
-        showToast(`發現新貼紙 (${cleanUid})，請選擇欲綁定的倉庫或物品`);
+        // 優先度 3: 未綁定貼紙 -> 顯示完整操作選單（設定倉庫 / 綁定到現有倉庫 / 新增物品入庫）
+        setUnboundUidChoice(cleanUid);
+        showToast(`發現新貼紙 (${cleanUid})，請選擇要執行的動作`);
       };
 
       // 啟動 Web NFC (若瀏覽器支援)
@@ -490,6 +507,81 @@
         setShowCreateWarehouseModal(false);
         setActiveWarehouse(newWh);
         showToast(`已建立倉庫「${newWh.name}」！`);
+      };
+
+      // 更新倉庫設定（若更名會自動同步更新倉內物品位置）
+      const handleUpdateWarehouseSettings = (e) => {
+        e.preventDefault();
+        if (!activeWarehouse || !warehouseEditForm.name.trim()) return;
+        const oldName = activeWarehouse.name;
+        const newName = warehouseEditForm.name.trim();
+        const updatedWh = {
+          ...activeWarehouse,
+          name: newName,
+          nfc_uid: warehouseEditForm.nfc_uid.trim().toUpperCase() || null,
+          icon: warehouseEditForm.icon || "📦",
+          description: warehouseEditForm.description.trim(),
+          updated_at: new Date().toISOString()
+        };
+        setWarehouses(prev => prev.map(w => w.id === activeWarehouse.id ? updatedWh : w));
+        if (oldName !== newName) {
+          setItems(prev => prev.map(it => it.location === oldName ? { ...it, location: newName, updated_at: new Date().toISOString() } : it));
+        }
+        setActiveWarehouse(updatedWh);
+        setWarehouseHubTab('inventory');
+        showToast(`已更新倉庫「${updatedWh.name}」設定！`);
+      };
+
+      // 綁定新掃到的貼紙到現有倉庫並立即打開出入庫看板
+      const handleBindTagToExistingWarehouse = (uid, wh) => {
+        const cleanUid = uid.trim().toUpperCase();
+        const updatedWh = { ...wh, nfc_uid: cleanUid, updated_at: new Date().toISOString() };
+        setWarehouses(prev => prev.map(w => w.id === wh.id ? updatedWh : w));
+        setUnboundUidChoice(null);
+        setActiveWarehouse(updatedWh);
+        showToast(`已將貼紙 (${cleanUid}) 綁定至「${updatedWh.name}」，可立即進行物品出入庫！`);
+      };
+
+      // 倉庫內極速入庫
+      const handleQuickInboundToWarehouse = (e) => {
+        e.preventDefault();
+        if (!activeWarehouse || !quickInboundForm.name.trim()) return;
+        const qty = Math.max(1, parseInt(quickInboundForm.quantity) || 1);
+        const days = parseInt(quickInboundForm.expiryDays);
+        const expiryDate = quickInboundForm.category === "食品生鮮" && !isNaN(days)
+          ? Date.now() + days * ONE_DAY_MS
+          : null;
+        const newItem = {
+          id: 'item-' + Date.now(),
+          nfc_uid: null,
+          name: quickInboundForm.name.trim(),
+          category: quickInboundForm.category,
+          location: activeWarehouse.name,
+          quantity: qty,
+          notes: quickInboundForm.notes.trim(),
+          image_url: "",
+          expiry_date: expiryDate,
+          updated_at: new Date().toISOString()
+        };
+        setItems(prev => [newItem, ...prev]);
+        setQuickInboundForm({ name: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
+        setWarehouseHubTab('inventory');
+        showToast(`【快速入庫】已將 ${qty} 件「${newItem.name}」放入「${activeWarehouse.name}」`);
+      };
+
+      // 將其他倉庫物品一鍵調撥入庫到目前倉庫
+      const handleTransferInToActiveWarehouse = (item) => {
+        if (!activeWarehouse) return;
+        const timeStr = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        const log = `\n[調撥入庫 ${timeStr}] 從「${item.location}」移入「${activeWarehouse.name}」`;
+        setItems(prev => prev.map(it => it.id === item.id ? {
+          ...it,
+          location: activeWarehouse.name,
+          notes: (it.notes || '') + log,
+          updated_at: new Date().toISOString()
+        } : it));
+        setWarehouseHubTab('inventory');
+        showToast(`【調撥入庫】已將「${item.name}」移入「${activeWarehouse.name}」`);
       };
 
       // 刪除倉庫與其中物品
@@ -1079,80 +1171,349 @@
                   );
                 })()}
 
-                {/* 快速入庫此倉庫按鈕 */}
-                <button
-                  onClick={() => {
-                    setIsCreatingNewItem(true);
-                    setEditingItem({
-                      name: "",
-                      category: "食品生鮮",
-                      location: activeWarehouse.name,
-                      quantity: 1,
-                      notes: "",
-                      image_url: "",
-                      expiry_date: Date.now() + 7 * ONE_DAY_MS
-                    });
-                  }}
-                  className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm mb-3 flex items-center justify-center space-x-2 transition"
-                >
-                  <span>📥</span>
-                  <span>放入新物品 / 快速入庫此倉庫</span>
-                </button>
+                {/* 3-Tab 模式切換列：倉內出入庫 / 快速入庫與調撥 / 倉庫設定 */}
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 mb-3">
+                  <button
+                    onClick={() => setWarehouseHubTab('inventory')}
+                    className={`py-2 rounded-lg text-xs font-bold transition ${
+                      warehouseHubTab === 'inventory' ? 'bg-cyan-400 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    📦 倉內出入庫 ({items.filter(i => i.location === activeWarehouse.name).length})
+                  </button>
+                  <button
+                    onClick={() => setWarehouseHubTab('inbound')}
+                    className={`py-2 rounded-lg text-xs font-bold transition ${
+                      warehouseHubTab === 'inbound' ? 'bg-cyan-400 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    📥 快速入庫 / 調撥
+                  </button>
+                  <button
+                    onClick={() => setWarehouseHubTab('settings')}
+                    className={`py-2 rounded-lg text-xs font-bold transition ${
+                      warehouseHubTab === 'settings' ? 'bg-cyan-400 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ⚙️ 倉庫設定
+                  </button>
+                </div>
 
-                {/* 倉內物品列表 */}
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {items.filter(i => i.location === activeWarehouse.name).length === 0 ? (
-                    <div className="text-center py-10 text-slate-500 text-xs">
-                      此倉庫目前為空，點選上方按鈕開始入庫
+                {/* Tab 內容區 */}
+                {warehouseHubTab === 'inventory' && (
+                  <>
+                    <div className="flex items-center space-x-2 mb-3">
+                      <button
+                        onClick={() => setWarehouseHubTab('inbound')}
+                        className="flex-1 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm flex items-center justify-center space-x-2 transition"
+                      >
+                        <span>📥</span>
+                        <span>極速入庫 / 從他倉調撥</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsCreatingNewItem(true);
+                          setEditingItem({
+                            name: "",
+                            category: "食品生鮮",
+                            location: activeWarehouse.name,
+                            quantity: 1,
+                            notes: "",
+                            image_url: "",
+                            expiry_date: Date.now() + 7 * ONE_DAY_MS
+                          });
+                        }}
+                        className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition"
+                      >
+                        ＋ 完整新增
+                      </button>
                     </div>
-                  ) : (
-                    items.filter(i => i.location === activeWarehouse.name).map(it => {
-                      const expiry = getExpiryInfo(it.expiry_date);
-                      return (
-                        <div
-                          key={it.id}
-                          className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between"
-                        >
-                          <div className="flex-1 cursor-pointer" onClick={() => setEditingItem(it)}>
-                            <div className="font-bold text-sm text-white">{it.name}</div>
-                            {it.expiry_date && (
-                              <div className={`text-[11px] font-semibold mt-0.5 ${
-                                expiry.status === 'expired' ? 'text-rose-400' : (expiry.status === 'expiring_soon' ? 'text-amber-400' : 'text-emerald-400')
-                              }`}>
-                                {expiry.label}
-                              </div>
-                            )}
-                            {it.notes && <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{it.notes}</div>}
-                          </div>
 
-                          <div className="flex items-center space-x-2 ml-2">
-                            <button
-                              onClick={() => handleAdjustQuantity(it.id, -1)}
-                              className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center"
-                              title="出庫 1 件"
+                    {/* 倉內物品列表 */}
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                      {items.filter(i => i.location === activeWarehouse.name).length === 0 ? (
+                        <div className="text-center py-10 text-slate-500 text-xs">
+                          此倉庫目前為空，點選上方「📥 極速入庫 / 從他倉調撥」放入物品
+                        </div>
+                      ) : (
+                        items.filter(i => i.location === activeWarehouse.name).map(it => {
+                          const expiry = getExpiryInfo(it.expiry_date);
+                          return (
+                            <div
+                              key={it.id}
+                              className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between"
                             >
-                              -
-                            </button>
-                            <span className="font-black text-sm text-white min-w-[20px] text-center">{it.quantity}</span>
-                            <button
-                              onClick={() => handleAdjustQuantity(it.id, 1)}
-                              className="w-8 h-8 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold flex items-center justify-center"
-                              title="入庫 1 件"
-                            >
-                              +
-                            </button>
-                            <button
-                              onClick={() => setCheckoutItem(it)}
-                              className="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-slate-700 ml-1"
-                            >
-                              出庫登記
-                            </button>
+                              <div className="flex-1 cursor-pointer" onClick={() => setEditingItem(it)}>
+                                <div className="font-bold text-sm text-white">{it.name}</div>
+                                {it.expiry_date && (
+                                  <div className={`text-[11px] font-semibold mt-0.5 ${
+                                    expiry.status === 'expired' ? 'text-rose-400' : (expiry.status === 'expiring_soon' ? 'text-amber-400' : 'text-emerald-400')
+                                  }`}>
+                                    {expiry.label}
+                                  </div>
+                                )}
+                                {it.notes && <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{it.notes}</div>}
+                              </div>
+
+                              <div className="flex items-center space-x-2 ml-2">
+                                <button
+                                  onClick={() => handleAdjustQuantity(it.id, -1)}
+                                  className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center"
+                                  title="出庫 1 件"
+                                >
+                                  -
+                                </button>
+                                <span className="font-black text-sm text-white min-w-[20px] text-center">{it.quantity}</span>
+                                <button
+                                  onClick={() => handleAdjustQuantity(it.id, 1)}
+                                  className="w-8 h-8 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold flex items-center justify-center"
+                                  title="入庫 1 件"
+                                >
+                                  +
+                                </button>
+                                <button
+                                  onClick={() => setCheckoutItem(it)}
+                                  className="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-slate-700 ml-1"
+                                >
+                                  出庫登記
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {warehouseHubTab === 'inbound' && (
+                  <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                    {/* 極速入庫表單 */}
+                    <form onSubmit={handleQuickInboundToWarehouse} className="bg-slate-950/90 border border-cyan-400/40 rounded-xl p-4 space-y-3">
+                      <h4 className="font-bold text-sm text-cyan-400">📥 極速新增入庫至「{activeWarehouse.name}」</h4>
+                      <input
+                        type="text"
+                        required
+                        placeholder="物品或食材名稱 *（如：鮮奶、ESP32、電池）"
+                        value={quickInboundForm.name}
+                        onChange={(e) => setQuickInboundForm({ ...quickInboundForm, name: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
+                      />
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <select
+                          value={quickInboundForm.category}
+                          onChange={(e) => setQuickInboundForm({ ...quickInboundForm, category: e.target.value })}
+                          className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                        >
+                          {CATEGORIES.filter(c => c !== "全部").map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <div className="flex items-center space-x-2 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                          <span className="text-xs text-slate-400">數量</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={quickInboundForm.quantity}
+                            onChange={(e) => setQuickInboundForm({ ...quickInboundForm, quantity: e.target.value })}
+                            className="w-full bg-transparent text-white font-bold text-sm text-center focus:outline-none"
+                          />
+                        </div>
+                        {quickInboundForm.category === "食品生鮮" && (
+                          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                            <span className="text-xs text-slate-400">效期天</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={quickInboundForm.expiryDays}
+                              onChange={(e) => setQuickInboundForm({ ...quickInboundForm, expiryDays: e.target.value })}
+                              className="w-full bg-transparent text-emerald-400 font-bold text-sm text-center focus:outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="備註 (選填)"
+                        value={quickInboundForm.notes}
+                        onChange={(e) => setQuickInboundForm({ ...quickInboundForm, notes: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm transition"
+                      >
+                        ✅ 確認入庫到此倉庫
+                      </button>
+                    </form>
+
+                    {/* 從其他倉庫調撥入庫 */}
+                    {items.some(i => i.location !== activeWarehouse.name) && (
+                      <div className="space-y-2">
+                        <h4 className="font-bold text-sm text-white">🔄 從其他倉庫快速調撥入庫</h4>
+                        <input
+                          type="text"
+                          placeholder="搜尋其他倉庫中的物品..."
+                          value={transferSearch}
+                          onChange={(e) => setTransferSearch(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:border-cyan-400 focus:outline-none"
+                        />
+                        <div className="space-y-2">
+                          {items
+                            .filter(i => i.location !== activeWarehouse.name && (!transferSearch.trim() || i.name.toLowerCase().includes(transferSearch.toLowerCase()) || i.location.toLowerCase().includes(transferSearch.toLowerCase())))
+                            .slice(0, 12)
+                            .map(candidate => (
+                              <div key={candidate.id} className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
+                                <div>
+                                  <div className="text-sm font-bold text-white">{candidate.name}</div>
+                                  <div className="text-[11px] text-slate-400">原位置：{candidate.location} ｜ 庫存：{candidate.quantity}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleTransferInToActiveWarehouse(candidate)}
+                                  className="px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-bold text-xs rounded-lg transition"
+                                >
+                                  📥 調入此倉
+                                </button>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {warehouseHubTab === 'settings' && (
+                  <form onSubmit={handleUpdateWarehouseSettings} className="flex-1 overflow-y-auto space-y-3 pr-1">
+                    <h4 className="font-bold text-sm text-cyan-400">⚙️ 編輯倉庫與貼紙設定</h4>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">倉庫 / 收納箱名稱 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={warehouseEditForm.name}
+                        onChange={(e) => setWarehouseEditForm({ ...warehouseEditForm, name: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">綁定 NFC 貼紙 UID</label>
+                      <input
+                        type="text"
+                        value={warehouseEditForm.nfc_uid}
+                        onChange={(e) => setWarehouseEditForm({ ...warehouseEditForm, nfc_uid: e.target.value.toUpperCase() })}
+                        placeholder="例如 04:D1:22:90"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-cyan-400 focus:border-cyan-400 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">選擇代表圖示</label>
+                      <div className="flex flex-wrap gap-2">
+                        {["🧊", "❄️", "📦", "🧰", "🧥", "⛺", "🔐"].map(ic => (
+                          <button
+                            key={ic}
+                            type="button"
+                            onClick={() => setWarehouseEditForm({ ...warehouseEditForm, icon: ic })}
+                            className={`px-3 py-1.5 rounded-lg border text-lg transition ${
+                              warehouseEditForm.icon === ic ? 'bg-cyan-400/20 border-cyan-400' : 'bg-slate-950 border-slate-700'
+                            }`}
+                          >
+                            {ic}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">存放說明 / 溫濕度備註</label>
+                      <input
+                        type="text"
+                        value={warehouseEditForm.description}
+                        onChange={(e) => setWarehouseEditForm({ ...warehouseEditForm, description: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm transition"
+                    >
+                      💾 儲存倉庫設定
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 1.5 未綁定 NFC 貼紙多選動作視窗 */}
+          {unboundUidChoice && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl p-5 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <h3 className="font-bold text-base text-white">📡 發現未綁定 NFC 貼紙</h3>
+                  <button onClick={() => setUnboundUidChoice(null)} className="text-slate-400 hover:text-white">✕</button>
+                </div>
+
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-center">
+                  <div className="text-xs text-slate-400">貼紙 UID</div>
+                  <div className="text-base font-mono font-bold text-cyan-400 mt-0.5">{unboundUidChoice}</div>
+                </div>
+
+                <p className="text-xs text-slate-300 text-center">
+                  您可以將此貼紙設定為倉庫、綁定到現有倉庫並立即進行物品出入庫，或是綁定為單一物品入庫：
+                </p>
+
+                <div className="space-y-2">
+                  <button
+                    onClick={() => {
+                      const uid = unboundUidChoice;
+                      setUnboundUidChoice(null);
+                      setCreateWarehouseUid(uid);
+                      setShowCreateWarehouseModal(true);
+                    }}
+                    className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm transition"
+                  >
+                    🏷️ 建立並綁定為【新倉庫貼紙】
+                  </button>
+                  <button
+                    onClick={() => {
+                      const uid = unboundUidChoice;
+                      setUnboundUidChoice(null);
+                      setIsCreatingNewItem(true);
+                      setEditingItem({
+                        nfc_uid: uid,
+                        name: "",
+                        category: "食品生鮮",
+                        location: warehouses[0]?.name || "未指定倉庫",
+                        quantity: 1,
+                        notes: "",
+                        image_url: "",
+                        expiry_date: Date.now() + 7 * ONE_DAY_MS
+                      });
+                    }}
+                    className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-sm border border-slate-700 transition"
+                  >
+                    📦 綁定為【單一物品標籤 / 立即入庫】
+                  </button>
+                </div>
+
+                {warehouses.length > 0 && (
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <div className="text-xs font-semibold text-slate-400">或直接綁定至以下現有倉庫並開啟出入庫看板：</div>
+                    {warehouses.map(wh => (
+                      <button
+                        key={wh.id}
+                        onClick={() => handleBindTagToExistingWarehouse(unboundUidChoice, wh)}
+                        className="w-full flex items-center justify-between bg-slate-950 hover:border-cyan-400 border border-slate-800 rounded-xl px-3 py-2.5 text-left transition"
+                      >
+                        <div className="flex items-center space-x-2">
+                          <span className="text-lg">{wh.icon || '📦'}</span>
+                          <div>
+                            <div className="text-xs font-bold text-white">{wh.name}</div>
+                            {wh.nfc_uid && <div className="text-[10px] text-slate-500 font-mono">原 UID: {wh.nfc_uid}</div>}
                           </div>
                         </div>
-                      );
-                    })
-                  )}
-                </div>
+                        <span className="text-xs font-bold text-cyan-400">綁定並出入庫 →</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

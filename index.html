@@ -888,75 +888,109 @@
           {/* TAB 1: 倉庫與收納箱總覽 */}
           {currentTab === 1 && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 rounded-xl p-4">
                 <div>
-                  <h3 className="font-bold text-sm text-white">📡 倉庫 NFC 貼紙管理</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">點擊倉庫卡片即可展開倉內所有收納物，並直接出入庫</p>
+                  <h3 className="font-bold text-sm text-white">📡 倉庫與收納箱總覽</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">點擊卡片展開倉內物品進行出入庫，或點擊「🗑️ 刪除」移除不需要的倉庫</p>
                 </div>
-                <button
-                  onClick={() => { setCreateWarehouseUid(""); setShowCreateWarehouseModal(true); }}
-                  className="px-3 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-lg shadow"
-                >
-                  ＋ 建立新倉庫貼紙
-                </button>
+                <div className="flex items-center space-x-2">
+                  {warehouses.length > 0 && (
+                    <button
+                      onClick={handleClearAllData}
+                      className="px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-lg transition flex items-center space-x-1"
+                    >
+                      <span>🗑️</span>
+                      <span>清空全部倉庫</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setCreateWarehouseUid(""); setShowCreateWarehouseModal(true); }}
+                    className="px-3 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-lg shadow"
+                  >
+                    ＋ 建立新倉庫貼紙
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {warehouses.map(wh => {
-                  const storedItems = items.filter(i => i.location === wh.name);
-                  const totalUnits = storedItems.reduce((acc, i) => acc + (i.quantity || 0), 0);
-                  const hasExpired = storedItems.some(i => getExpiryInfo(i.expiry_date).status === 'expired');
-
-                  return (
-                    <div
-                      key={wh.id}
-                      onClick={() => setActiveWarehouse(wh)}
-                      className="bg-slate-900 border border-slate-800 hover:border-cyan-400/60 rounded-2xl p-4 cursor-pointer transition shadow-lg group relative"
+              {warehouses.length === 0 ? (
+                <div className="text-center py-14 bg-slate-900/50 border border-slate-800 rounded-2xl">
+                  <div className="text-4xl mb-3">🏬</div>
+                  <h3 className="text-base font-bold text-white">目前沒有任何倉庫或收納箱</h3>
+                  <p className="text-xs text-slate-400 mt-1 mb-5">您可以建立自己的倉庫並綁定 NFC 貼紙，或重新載入範例資料</p>
+                  <div className="flex items-center justify-center space-x-3">
+                    <button
+                      onClick={handleResetData}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 transition"
                     >
-                      {hasExpired && (
-                        <span className="absolute top-3 right-3 text-[10px] bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full font-bold border border-rose-500/40">
-                          ⚠️ 內含過期品
-                        </span>
-                      )}
+                      🔄 載入範例倉庫
+                    </button>
+                    <button
+                      onClick={() => { setCreateWarehouseUid(""); setShowCreateWarehouseModal(true); }}
+                      className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold rounded-xl shadow transition"
+                    >
+                      ＋ 新增倉庫
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {warehouses.map(wh => {
+                    const storedItems = items.filter(i => i.location === wh.name);
+                    const totalUnits = storedItems.reduce((acc, i) => acc + (i.quantity || 0), 0);
+                    const hasExpired = storedItems.some(i => getExpiryInfo(i.expiry_date).status === 'expired');
 
-                      <div className="flex items-center space-x-3">
-                        <div className="w-12 h-12 rounded-xl bg-slate-950 border border-slate-700/80 flex items-center justify-center text-2xl group-hover:scale-105 transition">
-                          {wh.icon || '📦'}
+                    return (
+                      <div
+                        key={wh.id}
+                        onClick={() => setActiveWarehouse(wh)}
+                        className="bg-slate-900 border border-slate-800 hover:border-cyan-400/60 rounded-2xl p-4 cursor-pointer transition shadow-lg group relative"
+                      >
+                        {hasExpired && (
+                          <span className="absolute top-3 right-3 text-[10px] bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full font-bold border border-rose-500/40">
+                            ⚠️ 內含過期品
+                          </span>
+                        )}
+
+                        <div className="flex items-center space-x-3">
+                          <div className="w-12 h-12 rounded-xl bg-slate-950 border border-slate-700/80 flex items-center justify-center text-2xl group-hover:scale-105 transition">
+                            {wh.icon || '📦'}
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-base text-white group-hover:text-cyan-400 transition">{wh.name}</h4>
+                            <div className="text-xs text-slate-400 mt-0.5">
+                              共收納 <span className="text-cyan-400 font-bold">{storedItems.length}</span> 種品項 ({totalUnits} 件)
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="font-bold text-base text-white group-hover:text-cyan-400 transition">{wh.name}</h4>
-                          <div className="text-xs text-slate-400 mt-0.5">
-                            共收納 <span className="text-cyan-400 font-bold">{storedItems.length}</span> 種品項 ({totalUnits} 件)
+
+                        {wh.description && (
+                          <p className="text-xs text-slate-400 mt-3 line-clamp-2 bg-slate-950/40 p-2 rounded-lg border border-slate-800">
+                            {wh.description}
+                          </p>
+                        )}
+
+                        <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+                          <span className="font-mono text-cyan-400">{wh.nfc_uid ? `🏷️ UID: ${wh.nfc_uid}` : '未綁定貼紙'}</span>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteWarehouse(wh.id);
+                              }}
+                              className="px-2 py-1 rounded-md bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20 font-semibold transition flex items-center space-x-1"
+                              title="刪除此倉庫"
+                            >
+                              <span>🗑️</span>
+                              <span>刪除</span>
+                            </button>
+                            <span className="group-hover:translate-x-1 transition text-cyan-400 font-semibold">展開看板 →</span>
                           </div>
                         </div>
                       </div>
-
-                      {wh.description && (
-                        <p className="text-xs text-slate-400 mt-3 line-clamp-2 bg-slate-950/40 p-2 rounded-lg border border-slate-800">
-                          {wh.description}
-                        </p>
-                      )}
-
-                      <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-                        <span className="font-mono text-cyan-400">{wh.nfc_uid ? `🏷️ UID: ${wh.nfc_uid}` : '未綁定貼紙'}</span>
-                        <div className="flex items-center space-x-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteWarehouse(wh.id);
-                            }}
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            title="刪除此倉庫"
-                          >
-                            🗑️
-                          </button>
-                          <span className="group-hover:translate-x-1 transition text-cyan-400 font-semibold">展開看板 →</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

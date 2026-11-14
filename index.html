@@ -57,6 +57,48 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
+    const CATEGORIES = ["全部", "食品生鮮", "電子元件", "五金工具", "生活雜物", "季節衣物", "文件檔案"];
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, errorMessage: "" };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true, errorMessage: error?.message || String(error) };
+      }
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="min-h-screen bg-[#090D16] text-slate-100 flex items-center justify-center p-6">
+              <div className="bg-slate-900 border border-rose-500/50 rounded-2xl p-6 max-w-md w-full text-center space-y-4 shadow-2xl">
+                <div className="text-4xl">⚠️</div>
+                <h2 className="text-lg font-bold text-white">頁面發生未預期錯誤</h2>
+                <p className="text-xs text-rose-300 font-mono bg-slate-950 p-3 rounded-lg border border-slate-800 break-all">
+                  {this.state.errorMessage}
+                </p>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => this.setState({ hasError: false, errorMessage: "" })}
+                    className="flex-1 py-2.5 bg-cyan-400 text-slate-950 font-bold rounded-xl text-xs"
+                  >
+                    恢復畫面
+                  </button>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="flex-1 py-2.5 bg-slate-800 text-slate-200 font-bold rounded-xl text-xs border border-slate-700"
+                  >
+                    重新載入
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
     // --- 預設測試資料 (Initial Realistic Warehouses & Items) ---
     const INITIAL_WAREHOUSES = [
       {
@@ -117,6 +159,7 @@
       {
         id: "item-1",
         nfc_uid: null,
+        barcode: "4710088410123",
         name: "北海道特級鮮乳 936ml",
         category: "食品生鮮",
         location: "廚房冰箱 - 冷藏庫",
@@ -129,6 +172,7 @@
       {
         id: "item-2",
         nfc_uid: null,
+        barcode: "4710088420567",
         name: "手工起司切片盒",
         category: "食品生鮮",
         location: "廚房冰箱 - 冷藏庫",
@@ -141,6 +185,7 @@
       {
         id: "item-3",
         nfc_uid: null,
+        barcode: "4710105012345",
         name: "希臘式無糖優格 500g",
         category: "食品生鮮",
         location: "廚房冰箱 - 冷藏庫",
@@ -248,9 +293,15 @@
 
     // Helper to calculate expiry status
     function getExpiryInfo(expiryDate) {
-      if (!expiryDate) return { status: 'none', days: null, label: '' };
-      const diffDays = Math.ceil((expiryDate - Date.now()) / ONE_DAY_MS);
-      const dateStr = new Date(expiryDate).toLocaleDateString('zh-TW');
+      if (expiryDate === null || expiryDate === undefined || expiryDate === '') {
+        return { status: 'none', days: null, label: '' };
+      }
+      const ts = Number(expiryDate);
+      if (Number.isNaN(ts)) {
+        return { status: 'none', days: null, label: '' };
+      }
+      const diffDays = Math.ceil((ts - Date.now()) / ONE_DAY_MS);
+      const dateStr = new Date(ts).toLocaleDateString('zh-TW');
       if (diffDays < 0) {
         return { status: 'expired', days: diffDays, label: `⚠️ 已過期 ${-diffDays} 天 (${dateStr})` };
       } else if (diffDays <= 7) {
@@ -260,17 +311,196 @@
       }
     }
 
+    // --- 商品條碼掃描組件 (支援相機 BarcodeDetector + 手動 / 模擬輸入) ---
+    function BarcodeScannerModal({ isOpen, title, onClose, onDetected }) {
+      const videoRef = useRef(null);
+      const streamRef = useRef(null);
+      const timerRef = useRef(null);
+      const [manualBarcode, setManualBarcode] = useState("");
+      const [cameraError, setCameraError] = useState("");
+      const [cameraActive, setCameraActive] = useState(false);
+
+      const stopCamera = () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
+        setCameraActive(false);
+      };
+
+      useEffect(() => {
+        if (!isOpen) {
+          stopCamera();
+          setManualBarcode("");
+          setCameraError("");
+          return;
+        }
+
+        let cancelled = false;
+        const startCamera = async () => {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setCameraError("此瀏覽器環境不支援相機存取（需 HTTPS 或支援的手機瀏覽器），請改用下方條碼輸入或測試按鈕。");
+            return;
+          }
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: "environment" } }
+            });
+            if (cancelled) {
+              stream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            streamRef.current = stream;
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+              await videoRef.current.play().catch(() => {});
+            }
+            setCameraActive(true);
+
+            if ('BarcodeDetector' in window) {
+              const detector = new window.BarcodeDetector({
+                formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
+              });
+              timerRef.current = setInterval(async () => {
+                if (!videoRef.current || videoRef.current.readyState < 2) return;
+                try {
+                  const codes = await detector.detect(videoRef.current);
+                  if (codes && codes.length > 0 && codes[0].rawValue) {
+                    const val = codes[0].rawValue.trim();
+                    stopCamera();
+                    onDetected(val);
+                  }
+                } catch (_) {}
+              }, 350);
+            } else {
+              setCameraError("已開啟相機預覽，但此瀏覽器未內建 BarcodeDetector；您可直接在下方輸入或點選測試條碼。");
+            }
+          } catch (err) {
+            setCameraError("無法開啟相機（請確認相機權限或改為手動輸入條碼）。");
+          }
+        };
+
+        startCamera();
+        return () => {
+          cancelled = true;
+          stopCamera();
+        };
+      }, [isOpen]);
+
+      if (!isOpen) return null;
+
+      return (
+        <div className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-400/50 w-full max-w-md rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <span className="text-xl">📷</span>
+                <h3 className="font-bold text-base text-white">{title || "掃描商品條碼"}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { stopCamera(); onClose(); }}
+                className="text-slate-400 hover:text-white text-lg px-2"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="relative w-full h-48 bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
+              <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
+              {cameraActive && (
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div className="w-4/5 h-20 border-2 border-cyan-400 rounded-lg shadow-[0_0_15px_rgba(34,211,238,0.4)] flex items-center justify-center">
+                    <div className="w-full h-0.5 bg-rose-400/80 animate-pulse"></div>
+                  </div>
+                </div>
+              )}
+              {!cameraActive && !cameraError && (
+                <div className="text-xs text-slate-400">正在啟動相機鏡頭...</div>
+              )}
+            </div>
+
+            {cameraError && (
+              <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5">
+                {cameraError}
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (manualBarcode.trim()) {
+                  stopCamera();
+                  onDetected(manualBarcode.trim());
+                }
+              }}
+              className="space-y-2"
+            >
+              <label className="block text-xs font-semibold text-slate-300">手動輸入 / 外接條碼槍掃入：</label>
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={manualBarcode}
+                  onChange={(e) => setManualBarcode(e.target.value)}
+                  placeholder="輸入 EAN-13 / UPC / QR 條碼..."
+                  className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono text-cyan-400 focus:border-cyan-400 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs rounded-lg"
+                >
+                  確認條碼
+                </button>
+              </div>
+            </form>
+
+            <div className="pt-2 border-t border-slate-800">
+              <div className="text-[11px] text-slate-400 mb-2">快速模擬商品條碼：</div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { code: "4710088410123", label: "北海道鮮乳" },
+                  { code: "4710105012345", label: "無糖優格" },
+                  { code: "4902102999998", label: "全新品項測試條碼" }
+                ].map(sample => (
+                  <button
+                    key={sample.code}
+                    type="button"
+                    onClick={() => { stopCamera(); onDetected(sample.code); }}
+                    className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-950 hover:border-cyan-400 border border-slate-800 text-slate-300 transition"
+                  >
+                    {sample.label} ({sample.code.slice(-4)})
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // --- 主程式 App ---
     function App() {
       // 狀態管理
       const [warehouses, setWarehouses] = useState(() => {
-        const saved = localStorage.getItem('nfc_inventory_warehouses');
-        return saved ? JSON.parse(saved) : INITIAL_WAREHOUSES;
+        try {
+          const saved = localStorage.getItem('nfc_inventory_warehouses');
+          return saved ? JSON.parse(saved) : INITIAL_WAREHOUSES;
+        } catch (_) {
+          return INITIAL_WAREHOUSES;
+        }
       });
 
       const [items, setItems] = useState(() => {
-        const saved = localStorage.getItem('nfc_inventory_items');
-        return saved ? JSON.parse(saved) : INITIAL_ITEMS;
+        try {
+          const saved = localStorage.getItem('nfc_inventory_items');
+          return saved ? JSON.parse(saved) : INITIAL_ITEMS;
+        } catch (_) {
+          return INITIAL_ITEMS;
+        }
       });
 
       const [currentTab, setCurrentTab] = useState(0); // 0: 物品總清單, 1: 倉庫與收納箱
@@ -282,8 +512,17 @@
       // 互動彈窗狀態
       const [activeWarehouse, setActiveWarehouse] = useState(null); // 當前打開的倉庫看板
       const [warehouseHubTab, setWarehouseHubTab] = useState('inventory'); // 'inventory' | 'inbound' | 'settings'
+      const [enableBarcodeInHub, setEnableBarcodeInHub] = useState(() => {
+        try {
+          return localStorage.getItem('nfc_enable_barcode_scan') === 'true';
+        } catch (_) {
+          return false;
+        }
+      });
+      const [barcodeScannerTarget, setBarcodeScannerTarget] = useState(null); // null | 'hub_inventory' | 'hub_inbound' | 'edit_item'
+      const [scannedBarcodeMatch, setScannedBarcodeMatch] = useState(null); // { barcode, item, inActiveWarehouse }
       const [unboundUidChoice, setUnboundUidChoice] = useState(null); // 未綁定貼紙選擇視窗
-      const [quickInboundForm, setQuickInboundForm] = useState({ name: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
+      const [quickInboundForm, setQuickInboundForm] = useState({ name: "", barcode: "", category: "食品生鮮", quantity: 1, hasExpiry: false, expiryDays: "7", notes: "" });
       const [transferSearch, setTransferSearch] = useState("");
       const [warehouseEditForm, setWarehouseEditForm] = useState({ name: "", nfc_uid: "", icon: "📦", description: "" });
       const [isScanningNFC, setIsScanningNFC] = useState(false);
@@ -302,6 +541,12 @@
       const [toastMsg, setToastMsg] = useState(null);
 
       useEffect(() => {
+        try {
+          localStorage.setItem('nfc_enable_barcode_scan', enableBarcodeInHub ? 'true' : 'false');
+        } catch (_) {}
+      }, [enableBarcodeInHub]);
+
+      useEffect(() => {
         if (activeWarehouse) {
           setWarehouseHubTab('inventory');
           setWarehouseEditForm({
@@ -311,6 +556,7 @@
             description: activeWarehouse.description || ""
           });
           setTransferSearch("");
+          setScannedBarcodeMatch(null);
         }
       }, [activeWarehouse?.id]);
 
@@ -362,7 +608,8 @@
             const matchLoc = it.location?.toLowerCase().includes(q);
             const matchNotes = it.notes?.toLowerCase().includes(q);
             const matchUid = it.nfc_uid?.toLowerCase().includes(q);
-            if (!matchName && !matchLoc && !matchNotes && !matchUid) return false;
+            const matchBarcode = it.barcode?.toLowerCase().includes(q);
+            if (!matchName && !matchLoc && !matchNotes && !matchUid && !matchBarcode) return false;
           }
           return true;
         });
@@ -370,7 +617,12 @@
 
       // 處理 NFC 感應事件 (實體 Web NFC 或 虛擬模擬感應)
       const handleNfcTagDetected = (uid) => {
-        const cleanUid = uid.trim().toUpperCase();
+        const cleanUid = (uid || "").trim().toUpperCase();
+        if (!cleanUid) {
+          showToast("⚠️ 無法讀取貼紙 UID，請改用虛擬模擬面板或手動輸入");
+          setIsScanningNFC(false);
+          return;
+        }
         setIsScanningNFC(false);
 
         // 優先度 1: 是否綁定倉庫？
@@ -384,6 +636,7 @@
         // 優先度 2: 是否綁定特定物品？
         const foundItem = items.find(i => i.nfc_uid && i.nfc_uid.toUpperCase() === cleanUid);
         if (foundItem) {
+          setIsCreatingNewItem(false);
           setEditingItem(foundItem);
           showToast(`已感應物品標籤：${foundItem.name}`);
           return;
@@ -394,6 +647,55 @@
         showToast(`發現新貼紙 (${cleanUid})，請選擇要執行的動作`);
       };
 
+      // 處理掃描到商品條碼
+      const handleBarcodeScanned = (rawCode) => {
+        const code = (rawCode || "").trim();
+        const target = barcodeScannerTarget;
+        setBarcodeScannerTarget(null);
+        if (!code) return;
+
+        if (target === 'edit_item') {
+          const inputEl = document.getElementById('edit_item_barcode');
+          if (inputEl) inputEl.value = code;
+          setEditingItem(prev => prev ? { ...prev, barcode: code } : prev);
+          showToast(`📷 已帶入商品條碼：${code}`);
+          return;
+        }
+
+        if (target === 'hub_inbound') {
+          const existingAny = items.find(i => i.barcode && i.barcode === code);
+          setQuickInboundForm(prev => ({
+            ...prev,
+            barcode: code,
+            name: prev.name || (existingAny ? existingAny.name : ""),
+            category: existingAny ? existingAny.category : prev.category
+          }));
+          showToast(existingAny
+            ? `📷 條碼匹配既有品項「${existingAny.name}」，已帶入表單`
+            : `📷 已掃入商品條碼：${code}`);
+          return;
+        }
+
+        if (target === 'hub_inventory' && activeWarehouse) {
+          const inWh = items.find(i => i.location === activeWarehouse.name && i.barcode === code);
+          if (inWh) {
+            setScannedBarcodeMatch({ barcode: code, item: inWh, inActiveWarehouse: true });
+            showToast(`📷 命中倉內品項：「${inWh.name}」`);
+            return;
+          }
+          const elsewhere = items.find(i => i.barcode === code);
+          if (elsewhere) {
+            setScannedBarcodeMatch({ barcode: code, item: elsewhere, inActiveWarehouse: false });
+            showToast(`📷 於「${elsewhere.location}」找到條碼品項`);
+            return;
+          }
+          // 尚未建檔的新條碼 -> 引導帶入極速入庫
+          setQuickInboundForm(prev => ({ ...prev, barcode: code }));
+          setWarehouseHubTab('inbound');
+          showToast(`📷 新商品條碼 ${code}，已為您切換至快速入庫並帶入條碼！`);
+        }
+      };
+
       // 啟動 Web NFC (若瀏覽器支援)
       const startWebNfcScan = async () => {
         if ('NDEFReader' in window) {
@@ -401,14 +703,34 @@
             setIsScanningNFC(true);
             const ndef = new NDEFReader();
             await ndef.scan();
-            showToast("請靠近 NFC 智慧貼紙...");
+            showToast("請將手機背部靠近 NFC 智慧貼紙...");
             ndef.onreading = (event) => {
-              const serial = event.serialNumber;
-              if (serial) {
-                // Format serial as hex separated with colons if needed
-                const formatted = serial.toUpperCase();
-                handleNfcTagDetected(formatted);
+              let detectedUid = (event.serialNumber || "").trim();
+              if (!detectedUid && event.message && Array.isArray(event.message.records)) {
+                for (const rec of event.message.records) {
+                  if (rec.recordType === "text" && rec.data) {
+                    try {
+                      const decoder = new TextDecoder(rec.encoding || "utf-8");
+                      const txt = decoder.decode(rec.data).trim();
+                      if (txt) {
+                        detectedUid = txt;
+                        break;
+                      }
+                    } catch (_) {}
+                  }
+                }
               }
+              if (detectedUid) {
+                handleNfcTagDetected(detectedUid.toUpperCase());
+              } else {
+                setIsScanningNFC(false);
+                setShowSimulator(true);
+                showToast("此貼紙未提供序列號，請使用虛擬模擬或手動綁定");
+              }
+            };
+            ndef.onreadingerror = () => {
+              setIsScanningNFC(false);
+              showToast("⚠️ NFC 讀取失敗，請重新貼近貼紙或開啟模擬面板");
             };
           } catch (error) {
             console.error("NFC Error:", error);
@@ -547,13 +869,14 @@
         e.preventDefault();
         if (!activeWarehouse || !quickInboundForm.name.trim()) return;
         const qty = Math.max(1, parseInt(quickInboundForm.quantity) || 1);
-        const days = parseInt(quickInboundForm.expiryDays);
-        const expiryDate = quickInboundForm.category === "食品生鮮" && !isNaN(days)
+        const days = parseInt(quickInboundForm.expiryDays, 10);
+        const expiryDate = quickInboundForm.hasExpiry && quickInboundForm.expiryDays !== "" && !Number.isNaN(days)
           ? Date.now() + days * ONE_DAY_MS
           : null;
         const newItem = {
           id: 'item-' + Date.now(),
           nfc_uid: null,
+          barcode: enableBarcodeInHub && quickInboundForm.barcode ? quickInboundForm.barcode.trim() : "",
           name: quickInboundForm.name.trim(),
           category: quickInboundForm.category,
           location: activeWarehouse.name,
@@ -564,9 +887,9 @@
           updated_at: new Date().toISOString()
         };
         setItems(prev => [newItem, ...prev]);
-        setQuickInboundForm({ name: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
+        setQuickInboundForm({ name: "", barcode: "", category: "食品生鮮", quantity: 1, hasExpiry: false, expiryDays: "7", notes: "" });
         setWarehouseHubTab('inventory');
-        showToast(`【快速入庫】已將 ${qty} 件「${newItem.name}」放入「${activeWarehouse.name}」`);
+        showToast(`【快速入庫】已將 ${qty} 件「${newItem.name}」放入「${activeWarehouse.name}」${expiryDate ? '' : '（無有效日期）'}`);
       };
 
       // 將其他倉庫物品一鍵調撥入庫到目前倉庫
@@ -767,7 +1090,7 @@
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="搜尋物品名稱、位置、備註、NFC UID..."
+                    placeholder="搜尋物品名稱、位置、條碼、NFC UID..."
                     className="w-full pl-9 pr-8 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
                   />
                   {searchQuery && (
@@ -791,7 +1114,7 @@
 
               {/* 分類篩選膠囊 */}
               <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar pb-3 mb-4">
-                {["全部", "食品生鮮", "電子元件", "五金工具", "生活雜物", "季節衣物", "文件檔案"].map(cat => (
+                {CATEGORIES.map(cat => (
                   <button
                     key={cat}
                     onClick={() => { setSelectedCategory(cat); setFilterOnlyExpiryAlert(false); }}
@@ -821,7 +1144,7 @@
                       key={item.id}
                       className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-3 flex items-center justify-between transition"
                     >
-                      <div className="flex-1 cursor-pointer" onClick={() => setEditingItem(item)}>
+                      <div className="flex-1 cursor-pointer" onClick={() => { setIsCreatingNewItem(false); setEditingItem(item); }}>
                         <div className="flex items-center space-x-2">
                           <span className="font-bold text-sm text-white">{item.name}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{item.category}</span>
@@ -891,7 +1214,7 @@
                           <div className="p-4">
                             <div className="flex items-start justify-between">
                               <h3
-                                onClick={() => setEditingItem(item)}
+                                onClick={() => { setIsCreatingNewItem(false); setEditingItem(item); }}
                                 className="font-bold text-base text-white hover:text-cyan-400 cursor-pointer"
                               >
                                 {item.name}
@@ -925,6 +1248,12 @@
                               <div className="mt-1 text-[11px] font-mono text-cyan-400 flex items-center space-x-1">
                                 <span>🏷️</span>
                                 <span>{item.nfc_uid}</span>
+                              </div>
+                            )}
+                            {item.barcode && (
+                              <div className="mt-1 text-[11px] font-mono text-emerald-400 flex items-center space-x-1">
+                                <span>▌║▌</span>
+                                <span>條碼: {item.barcode}</span>
                               </div>
                             )}
 
@@ -1100,7 +1429,7 @@
                   quantity: 1,
                   notes: "",
                   image_url: "",
-                  expiry_date: Date.now() + 7 * ONE_DAY_MS
+                  expiry_date: null
                 });
               }}
               className="py-3 px-5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-black rounded-full shadow-2xl flex items-center space-x-2 transition transform hover:scale-105 active:scale-95 border-2 border-slate-900"
@@ -1199,28 +1528,63 @@
                   </button>
                 </div>
 
+                {/* 商品條碼掃描選項開關 */}
+                <div className="mb-3 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm">▌║▌</span>
+                    <div>
+                      <div className="text-xs font-bold text-slate-200">是否啟用商品條碼掃描</div>
+                      <div className="text-[10px] text-slate-400">可自由切換手動出入庫或掃描條碼快速匹配</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEnableBarcodeInHub(v => !v)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                      enableBarcodeInHub
+                        ? 'bg-emerald-400/20 text-emerald-300 border-emerald-400/50'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {enableBarcodeInHub ? '✅ 已開啟條碼掃描' : '⚪ 關閉（手動）'}
+                  </button>
+                </div>
+
                 {/* Tab 內容區 */}
                 {warehouseHubTab === 'inventory' && (
                   <>
-                    <div className="flex items-center space-x-2 mb-3">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
                       <button
+                        type="button"
                         onClick={() => setWarehouseHubTab('inbound')}
-                        className="flex-1 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm flex items-center justify-center space-x-2 transition"
+                        className="flex-1 min-w-[140px] py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm flex items-center justify-center space-x-1.5 transition"
                       >
                         <span>📥</span>
-                        <span>極速入庫 / 從他倉調撥</span>
+                        <span>極速入庫 / 調撥</span>
                       </button>
+                      {enableBarcodeInHub && (
+                        <button
+                          type="button"
+                          onClick={() => setBarcodeScannerTarget('hub_inventory')}
+                          className="py-2.5 px-3.5 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-bold rounded-xl text-xs flex items-center space-x-1.5 transition"
+                        >
+                          <span>📷</span>
+                          <span>掃商品條碼出入庫</span>
+                        </button>
+                      )}
                       <button
+                        type="button"
                         onClick={() => {
                           setIsCreatingNewItem(true);
                           setEditingItem({
                             name: "",
+                            barcode: "",
                             category: "食品生鮮",
                             location: activeWarehouse.name,
                             quantity: 1,
                             notes: "",
                             image_url: "",
-                            expiry_date: Date.now() + 7 * ONE_DAY_MS
+                            expiry_date: null
                           });
                         }}
                         className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition"
@@ -1229,11 +1593,78 @@
                       </button>
                     </div>
 
+                    {/* 條碼掃描命中快速出入庫卡片 */}
+                    {scannedBarcodeMatch && (() => {
+                      const liveMatch = items.find(i => i.id === scannedBarcodeMatch.item.id) || scannedBarcodeMatch.item;
+                      return (
+                        <div className="mb-3 bg-emerald-500/10 border border-emerald-400/50 rounded-xl p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs font-bold text-emerald-300">
+                              📷 條碼匹配 ({scannedBarcodeMatch.barcode})：{liveMatch.name}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setScannedBarcodeMatch(null)}
+                              className="text-slate-400 hover:text-white text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {scannedBarcodeMatch.inActiveWarehouse ? (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-slate-300">
+                                目前庫存：<span className="font-black text-white">{liveMatch.quantity}</span> 件
+                              </span>
+                              <div className="flex items-center space-x-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => { handleAdjustQuantity(liveMatch.id, -1); showToast(`已出庫 1 件「${liveMatch.name}」`); }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold border border-slate-700"
+                                >
+                                  -1 出庫
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { handleAdjustQuantity(liveMatch.id, 1); showToast(`已入庫 1 件「${liveMatch.name}」`); }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold"
+                                >
+                                  +1 入庫
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCheckoutItem(liveMatch)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-cyan-400 text-xs font-bold border border-slate-700"
+                                >
+                                  出庫登記
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-slate-300">
+                                目前位於「{liveMatch.location}」(庫存 {liveMatch.quantity})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleTransferInToActiveWarehouse(liveMatch);
+                                  setScannedBarcodeMatch(null);
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 text-slate-950 text-xs font-bold"
+                              >
+                                📥 調入此倉
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* 倉內物品列表 */}
                     <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                       {items.filter(i => i.location === activeWarehouse.name).length === 0 ? (
                         <div className="text-center py-10 text-slate-500 text-xs">
-                          此倉庫目前為空，點選上方「📥 極速入庫 / 從他倉調撥」放入物品
+                          此倉庫目前為空，點選上方「📥 極速入庫 / 調撥」放入物品
                         </div>
                       ) : (
                         items.filter(i => i.location === activeWarehouse.name).map(it => {
@@ -1243,7 +1674,7 @@
                               key={it.id}
                               className="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between"
                             >
-                              <div className="flex-1 cursor-pointer" onClick={() => setEditingItem(it)}>
+                              <div className="flex-1 cursor-pointer" onClick={() => { setIsCreatingNewItem(false); setEditingItem(it); }}>
                                 <div className="font-bold text-sm text-white">{it.name}</div>
                                 {it.expiry_date && (
                                   <div className={`text-[11px] font-semibold mt-0.5 ${
@@ -1252,11 +1683,15 @@
                                     {expiry.label}
                                   </div>
                                 )}
+                                {it.barcode && (
+                                  <div className="text-[10px] font-mono text-emerald-400/90 mt-0.5">▌║▌ {it.barcode}</div>
+                                )}
                                 {it.notes && <div className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{it.notes}</div>}
                               </div>
 
                               <div className="flex items-center space-x-2 ml-2">
                                 <button
+                                  type="button"
                                   onClick={() => handleAdjustQuantity(it.id, -1)}
                                   className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center"
                                   title="出庫 1 件"
@@ -1265,6 +1700,7 @@
                                 </button>
                                 <span className="font-black text-sm text-white min-w-[20px] text-center">{it.quantity}</span>
                                 <button
+                                  type="button"
                                   onClick={() => handleAdjustQuantity(it.id, 1)}
                                   className="w-8 h-8 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold flex items-center justify-center"
                                   title="入庫 1 件"
@@ -1272,6 +1708,7 @@
                                   +
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() => setCheckoutItem(it)}
                                   className="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-slate-700 ml-1"
                                 >
@@ -1290,7 +1727,27 @@
                   <div className="flex-1 overflow-y-auto space-y-4 pr-1">
                     {/* 極速入庫表單 */}
                     <form onSubmit={handleQuickInboundToWarehouse} className="bg-slate-950/90 border border-cyan-400/40 rounded-xl p-4 space-y-3">
-                      <h4 className="font-bold text-sm text-cyan-400">📥 極速新增入庫至「{activeWarehouse.name}」</h4>
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-sm text-cyan-400">📥 極速新增入庫至「{activeWarehouse.name}」</h4>
+                        {enableBarcodeInHub && (
+                          <button
+                            type="button"
+                            onClick={() => setBarcodeScannerTarget('hub_inbound')}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-400/15 hover:bg-emerald-400/25 text-emerald-300 border border-emerald-400/40 text-xs font-bold"
+                          >
+                            📷 掃商品條碼
+                          </button>
+                        )}
+                      </div>
+                      {enableBarcodeInHub && (
+                        <input
+                          type="text"
+                          placeholder="商品條碼（可點擊右上掃描或略過）"
+                          value={quickInboundForm.barcode}
+                          onChange={(e) => setQuickInboundForm({ ...quickInboundForm, barcode: e.target.value })}
+                          className="w-full px-3 py-2 bg-slate-900 border border-emerald-500/40 rounded-lg text-xs font-mono text-emerald-300 focus:border-cyan-400 focus:outline-none"
+                        />
+                      )}
                       <input
                         type="text"
                         required
@@ -1299,7 +1756,7 @@
                         onChange={(e) => setQuickInboundForm({ ...quickInboundForm, name: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
                       />
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <select
                           value={quickInboundForm.category}
                           onChange={(e) => setQuickInboundForm({ ...quickInboundForm, category: e.target.value })}
@@ -1317,16 +1774,66 @@
                             className="w-full bg-transparent text-white font-bold text-sm text-center focus:outline-none"
                           />
                         </div>
-                        {quickInboundForm.category === "食品生鮮" && (
-                          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
-                            <span className="text-xs text-slate-400">效期天</span>
-                            <input
-                              type="number"
-                              min="0"
-                              value={quickInboundForm.expiryDays}
-                              onChange={(e) => setQuickInboundForm({ ...quickInboundForm, expiryDays: e.target.value })}
-                              className="w-full bg-transparent text-emerald-400 font-bold text-sm text-center focus:outline-none"
-                            />
+                      </div>
+
+                      {/* 有效日期選擇：無有效日期 vs 設定天數 */}
+                      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-300">有效日期（選填）</span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: false }))}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                !quickInboundForm.hasExpiry
+                                  ? 'bg-cyan-400/20 text-cyan-300 border-cyan-400/60'
+                                  : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
+                              }`}
+                            >
+                              無有效日期
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: true, expiryDays: prev.expiryDays || "7" }))}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                quickInboundForm.hasExpiry
+                                  ? 'bg-emerald-400/20 text-emerald-300 border-emerald-400/60'
+                                  : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
+                              }`}
+                            >
+                              設定效期天數
+                            </button>
+                          </div>
+                        </div>
+
+                        {quickInboundForm.hasExpiry ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center space-x-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 w-32">
+                              <span className="text-xs text-slate-400">有效</span>
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder="天數"
+                                value={quickInboundForm.expiryDays}
+                                onChange={(e) => setQuickInboundForm({ ...quickInboundForm, expiryDays: e.target.value })}
+                                className="w-full bg-transparent text-emerald-400 font-bold text-sm text-center focus:outline-none"
+                              />
+                              <span className="text-xs text-slate-400">天</span>
+                            </div>
+                            {[7, 30, 90, 365].map(d => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: true, expiryDays: String(d) }))}
+                                className="text-[11px] px-2 py-1 rounded-md bg-slate-950 text-cyan-400 border border-slate-800 hover:border-cyan-400/50"
+                              >
+                                +{d === 365 ? '1年' : `${d}天`}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-slate-400">
+                            目前設為「無有效日期」，入庫後不會發出過期提醒（若需追蹤可點右側「設定效期天數」）。
                           </div>
                         )}
                       </div>
@@ -1484,7 +1991,7 @@
                         quantity: 1,
                         notes: "",
                         image_url: "",
-                        expiry_date: Date.now() + 7 * ONE_DAY_MS
+                        expiry_date: null
                       });
                     }}
                     className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-sm border border-slate-700 transition"
@@ -1709,12 +2216,17 @@
               <div className="bg-slate-900 border border-slate-700 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl p-5 shadow-2xl">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <h3 className="font-bold text-base text-white">{isCreatingNewItem ? '📥 快速入庫 / 新增物品' : '✏️ 編輯物品詳細'}</h3>
-                  <button onClick={() => setEditingItem(null)} className="text-slate-400 hover:text-white">✕</button>
+                  <button onClick={() => { setEditingItem(null); setIsCreatingNewItem(false); }} className="text-slate-400 hover:text-white">✕</button>
                 </div>
 
-                <form onSubmit={(e) => {
+                <form key={editingItem.id || (isCreatingNewItem ? 'new-item' : 'edit-item')} onSubmit={(e) => {
                   e.preventDefault();
                   const form = e.target;
+                  let parsedExpiry = null;
+                  if (form.has_expiry.checked && form.expiry_date.value) {
+                    const ts = new Date(form.expiry_date.value).getTime();
+                    if (!Number.isNaN(ts)) parsedExpiry = ts;
+                  }
                   const itemData = {
                     ...editingItem,
                     name: form.name.value.trim(),
@@ -1722,9 +2234,10 @@
                     location: form.location.value.trim(),
                     quantity: parseInt(form.quantity.value) || 1,
                     nfc_uid: form.nfc_uid.value.trim() || null,
+                    barcode: form.barcode ? form.barcode.value.trim() : (editingItem.barcode || ""),
                     notes: form.notes.value.trim(),
                     image_url: form.image_url.value.trim(),
-                    expiry_date: form.has_expiry.checked ? new Date(form.expiry_date.value).getTime() : null
+                    expiry_date: parsedExpiry
                   };
                   if (!itemData.name) return alert("請輸入物品名稱");
                   if (!itemData.location) return alert("請指定存放位置");
@@ -1788,14 +2301,14 @@
                           id="has_expiry_checkbox"
                           name="has_expiry"
                           type="checkbox"
-                          defaultChecked={editingItem.expiry_date != null || editingItem.category === '食品生鮮'}
+                          defaultChecked={editingItem.expiry_date != null}
                           onChange={(e) => {
                             const dateInput = document.getElementById('expiry_date_input');
                             if (dateInput) dateInput.disabled = !e.target.checked;
                           }}
                           className="rounded text-cyan-400 focus:ring-0"
                         />
-                        <span>啟用保存期限追蹤 (食品/易腐耗材)</span>
+                        <span>啟用保存期限追蹤（無有效日期請保持不勾選）</span>
                       </label>
                     </div>
 
@@ -1804,17 +2317,30 @@
                         id="expiry_date_input"
                         name="expiry_date"
                         type="date"
+                        disabled={editingItem.expiry_date == null}
                         defaultValue={
                           editingItem.expiry_date
                             ? new Date(editingItem.expiry_date).toISOString().split('T')[0]
                             : new Date(Date.now() + 7 * ONE_DAY_MS).toISOString().split('T')[0]
                         }
-                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white disabled:opacity-40"
                       />
                     </div>
 
                     {/* 快捷天數標籤 */}
                     <div className="flex flex-wrap gap-1 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cb = document.getElementById('has_expiry_checkbox');
+                          const dateInput = document.getElementById('expiry_date_input');
+                          if (cb) cb.checked = false;
+                          if (dateInput) dateInput.disabled = true;
+                        }}
+                        className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700 hover:border-slate-500"
+                      >
+                        🚫 無有效日期
+                      </button>
                       {[
                         { label: "+3天", days: 3 },
                         { label: "+7天", days: 7 },
@@ -1828,8 +2354,13 @@
                           key={p.label}
                           onClick={() => {
                             const target = new Date(Date.now() + p.days * ONE_DAY_MS).toISOString().split('T')[0];
-                            document.getElementById('expiry_date_input').value = target;
-                            document.getElementById('has_expiry_checkbox').checked = true;
+                            const dateInput = document.getElementById('expiry_date_input');
+                            const cb = document.getElementById('has_expiry_checkbox');
+                            if (dateInput) {
+                              dateInput.value = target;
+                              dateInput.disabled = false;
+                            }
+                            if (cb) cb.checked = true;
                           }}
                           className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-cyan-400 border border-slate-800 hover:border-cyan-400/50"
                         >
@@ -1847,6 +2378,27 @@
                       defaultValue={editingItem.nfc_uid || ""}
                       placeholder="若貼紙貼在此單品上可填入 (如 04:A2:3B:9C)"
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-300">商品條碼 Barcode (選填，可選擇是否掃描)</label>
+                      <button
+                        type="button"
+                        onClick={() => setBarcodeScannerTarget('edit_item')}
+                        className="text-[11px] px-2.5 py-1 rounded-md bg-emerald-400/15 hover:bg-emerald-400/25 text-emerald-300 border border-emerald-400/40 font-bold"
+                      >
+                        📷 掃描商品條碼
+                      </button>
+                    </div>
+                    <input
+                      id="edit_item_barcode"
+                      name="barcode"
+                      type="text"
+                      defaultValue={editingItem.barcode || ""}
+                      placeholder="例如 4710088410123（可略過不掃）"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-emerald-300 font-mono"
                     />
                   </div>
 
@@ -1884,7 +2436,7 @@
                     )}
                     <button
                       type="button"
-                      onClick={() => setEditingItem(null)}
+                      onClick={() => { setEditingItem(null); setIsCreatingNewItem(false); }}
                       className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-bold"
                     >
                       取消
@@ -2027,11 +2579,57 @@
               </div>
             </div>
           )}
+          {/* 8. 等待實體 Web NFC 感應視窗 */}
+          {isScanningNFC && (
+            <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-cyan-400/50 w-full max-w-sm rounded-2xl p-6 text-center space-y-4 shadow-2xl">
+                <div className="w-20 h-20 mx-auto rounded-full bg-cyan-400/15 border-2 border-cyan-400 flex items-center justify-center text-4xl animate-pulse-subtle">
+                  📡
+                </div>
+                <h3 className="text-lg font-bold text-white">正在等待感應 NFC 貼紙...</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  請將手機背面 NFC 天線區靠近倉庫或物品貼紙。若無法讀取，可隨時切換至模擬面板。
+                </p>
+                <div className="flex space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsScanningNFC(false)}
+                    className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold text-xs rounded-xl border border-slate-700"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsScanningNFC(false); setShowSimulator(true); }}
+                    className="flex-1 py-2.5 bg-cyan-400 text-slate-950 font-bold text-xs rounded-xl"
+                  >
+                    開啟模擬面板
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 9. 商品條碼掃描視窗 */}
+          <BarcodeScannerModal
+            isOpen={barcodeScannerTarget !== null}
+            title={
+              barcodeScannerTarget === 'hub_inventory'
+                ? '📷 掃商品條碼（快速出入庫）'
+                : '📷 掃描商品條碼帶入資料'
+            }
+            onClose={() => setBarcodeScannerTarget(null)}
+            onDetected={handleBarcodeScanned}
+          />
         </div>
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
   </script>
 </body>
 </html>

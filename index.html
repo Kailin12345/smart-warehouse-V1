@@ -311,6 +311,16 @@
       }
     }
 
+    function formatDateInputValue(ts, fallbackDays = 7) {
+      if (ts !== null && ts !== undefined && ts !== '') {
+        const d = new Date(Number(ts));
+        if (!Number.isNaN(d.getTime())) {
+          return d.toISOString().split('T')[0];
+        }
+      }
+      return new Date(Date.now() + fallbackDays * ONE_DAY_MS).toISOString().split('T')[0];
+    }
+
     // --- 商品條碼掃描組件 (支援相機 BarcodeDetector + 手動 / 模擬輸入) ---
     function BarcodeScannerModal({ isOpen, title, onClose, onDetected }) {
       const videoRef = useRef(null);
@@ -362,24 +372,38 @@
             setCameraActive(true);
 
             if ('BarcodeDetector' in window) {
-              const detector = new window.BarcodeDetector({
-                formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']
-              });
-              timerRef.current = setInterval(async () => {
-                if (!videoRef.current || videoRef.current.readyState < 2) return;
-                try {
-                  const codes = await detector.detect(videoRef.current);
-                  if (codes && codes.length > 0 && codes[0].rawValue) {
-                    const val = codes[0].rawValue.trim();
-                    stopCamera();
-                    onDetected(val);
-                  }
-                } catch (_) {}
-              }, 350);
+              try {
+                const desiredFormats = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'];
+                let detector;
+                if (typeof window.BarcodeDetector.getSupportedFormats === 'function') {
+                  const supported = await window.BarcodeDetector.getSupportedFormats().catch(() => []);
+                  const usable = desiredFormats.filter(f => supported.includes(f));
+                  detector = usable.length > 0
+                    ? new window.BarcodeDetector({ formats: usable })
+                    : new window.BarcodeDetector();
+                } else {
+                  detector = new window.BarcodeDetector({ formats: desiredFormats });
+                }
+                if (cancelled) return;
+                timerRef.current = setInterval(async () => {
+                  if (!videoRef.current || videoRef.current.readyState < 2) return;
+                  try {
+                    const codes = await detector.detect(videoRef.current);
+                    if (codes && codes.length > 0 && codes[0].rawValue) {
+                      const val = codes[0].rawValue.trim();
+                      stopCamera();
+                      onDetected(val);
+                    }
+                  } catch (_) {}
+                }, 350);
+              } catch (_) {
+                setCameraError("已開啟相機預覽，但此裝置暫不支援自動辨識條碼；您可直接在下方手動輸入或點選測試條碼。");
+              }
             } else {
               setCameraError("已開啟相機預覽，但此瀏覽器未內建 BarcodeDetector；您可直接在下方輸入或點選測試條碼。");
             }
           } catch (err) {
+            stopCamera();
             setCameraError("無法開啟相機（請確認相機權限或改為手動輸入條碼）。");
           }
         };
@@ -488,7 +512,8 @@
       const [warehouses, setWarehouses] = useState(() => {
         try {
           const saved = localStorage.getItem('nfc_inventory_warehouses');
-          return saved ? JSON.parse(saved) : INITIAL_WAREHOUSES;
+          const parsed = saved ? JSON.parse(saved) : null;
+          return Array.isArray(parsed) ? parsed.filter(Boolean) : INITIAL_WAREHOUSES;
         } catch (_) {
           return INITIAL_WAREHOUSES;
         }
@@ -497,7 +522,8 @@
       const [items, setItems] = useState(() => {
         try {
           const saved = localStorage.getItem('nfc_inventory_items');
-          return saved ? JSON.parse(saved) : INITIAL_ITEMS;
+          const parsed = saved ? JSON.parse(saved) : null;
+          return Array.isArray(parsed) ? parsed.filter(Boolean) : INITIAL_ITEMS;
         } catch (_) {
           return INITIAL_ITEMS;
         }
@@ -522,7 +548,7 @@
       const [barcodeScannerTarget, setBarcodeScannerTarget] = useState(null); // null | 'hub_inventory' | 'hub_inbound' | 'edit_item'
       const [scannedBarcodeMatch, setScannedBarcodeMatch] = useState(null); // { barcode, item, inActiveWarehouse }
       const [unboundUidChoice, setUnboundUidChoice] = useState(null); // 未綁定貼紙選擇視窗
-      const [quickInboundForm, setQuickInboundForm] = useState({ name: "", barcode: "", category: "食品生鮮", quantity: 1, hasExpiry: false, expiryDays: "7", notes: "" });
+      const [quickInboundForm, setQuickInboundForm] = useState({ name: "", barcode: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
       const [transferSearch, setTransferSearch] = useState("");
       const [warehouseEditForm, setWarehouseEditForm] = useState({ name: "", nfc_uid: "", icon: "📦", description: "" });
       const [isScanningNFC, setIsScanningNFC] = useState(false);
@@ -539,11 +565,16 @@
       const [checkoutItem, setCheckoutItem] = useState(null);
       const [transferItem, setTransferItem] = useState(null);
       const [toastMsg, setToastMsg] = useState(null);
+      const nfcAbortRef = useRef(null);
+      const nfcDetectedHandlerRef = useRef(null);
 
       useEffect(() => {
         try {
           localStorage.setItem('nfc_enable_barcode_scan', enableBarcodeInHub ? 'true' : 'false');
         } catch (_) {}
+        if (!enableBarcodeInHub) {
+          setScannedBarcodeMatch(null);
+        }
       }, [enableBarcodeInHub]);
 
       useEffect(() => {
@@ -696,13 +727,20 @@
         }
       };
 
+      nfcDetectedHandlerRef.current = handleNfcTagDetected;
+
       // 啟動 Web NFC (若瀏覽器支援)
       const startWebNfcScan = async () => {
         if ('NDEFReader' in window) {
           try {
+            if (nfcAbortRef.current) {
+              try { nfcAbortRef.current.abort(); } catch (_) {}
+            }
+            const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            nfcAbortRef.current = controller;
             setIsScanningNFC(true);
             const ndef = new NDEFReader();
-            await ndef.scan();
+            await ndef.scan(controller ? { signal: controller.signal } : undefined);
             showToast("請將手機背部靠近 NFC 智慧貼紙...");
             ndef.onreading = (event) => {
               let detectedUid = (event.serialNumber || "").trim();
@@ -721,7 +759,7 @@
                 }
               }
               if (detectedUid) {
-                handleNfcTagDetected(detectedUid.toUpperCase());
+                nfcDetectedHandlerRef.current && nfcDetectedHandlerRef.current(detectedUid.toUpperCase());
               } else {
                 setIsScanningNFC(false);
                 setShowSimulator(true);
@@ -733,6 +771,7 @@
               showToast("⚠️ NFC 讀取失敗，請重新貼近貼紙或開啟模擬面板");
             };
           } catch (error) {
+            if (error && error.name === 'AbortError') return;
             console.error("NFC Error:", error);
             setIsScanningNFC(false);
             showToast("Web NFC 啟動失敗或權限受限，已開啟虛擬模擬面板");
@@ -869,8 +908,8 @@
         e.preventDefault();
         if (!activeWarehouse || !quickInboundForm.name.trim()) return;
         const qty = Math.max(1, parseInt(quickInboundForm.quantity) || 1);
-        const days = parseInt(quickInboundForm.expiryDays, 10);
-        const expiryDate = quickInboundForm.hasExpiry && quickInboundForm.expiryDays !== "" && !Number.isNaN(days)
+        const days = parseInt(quickInboundForm.expiryDays);
+        const expiryDate = quickInboundForm.category === "食品生鮮" && !isNaN(days)
           ? Date.now() + days * ONE_DAY_MS
           : null;
         const newItem = {
@@ -887,9 +926,9 @@
           updated_at: new Date().toISOString()
         };
         setItems(prev => [newItem, ...prev]);
-        setQuickInboundForm({ name: "", barcode: "", category: "食品生鮮", quantity: 1, hasExpiry: false, expiryDays: "7", notes: "" });
+        setQuickInboundForm({ name: "", barcode: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
         setWarehouseHubTab('inventory');
-        showToast(`【快速入庫】已將 ${qty} 件「${newItem.name}」放入「${activeWarehouse.name}」${expiryDate ? '' : '（無有效日期）'}`);
+        showToast(`【快速入庫】已將 ${qty} 件「${newItem.name}」放入「${activeWarehouse.name}」`);
       };
 
       // 將其他倉庫物品一鍵調撥入庫到目前倉庫
@@ -1424,12 +1463,13 @@
                 setPrefilledUid("");
                 setEditingItem({
                   name: "",
+                  barcode: "",
                   category: "食品生鮮",
                   location: activeWarehouse ? activeWarehouse.name : "廚房冰箱 - 冷藏庫",
                   quantity: 1,
                   notes: "",
                   image_url: "",
-                  expiry_date: null
+                  expiry_date: Date.now() + 7 * ONE_DAY_MS
                 });
               }}
               className="py-3 px-5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-black rounded-full shadow-2xl flex items-center space-x-2 transition transform hover:scale-105 active:scale-95 border-2 border-slate-900"
@@ -1584,7 +1624,7 @@
                             quantity: 1,
                             notes: "",
                             image_url: "",
-                            expiry_date: null
+                            expiry_date: Date.now() + 7 * ONE_DAY_MS
                           });
                         }}
                         className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition"
@@ -1661,7 +1701,7 @@
                     })()}
 
                     {/* 倉內物品列表 */}
-                    <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                    <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
                       {items.filter(i => i.location === activeWarehouse.name).length === 0 ? (
                         <div className="text-center py-10 text-slate-500 text-xs">
                           此倉庫目前為空，點選上方「📥 極速入庫 / 調撥」放入物品
@@ -1724,7 +1764,7 @@
                 )}
 
                 {warehouseHubTab === 'inbound' && (
-                  <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
                     {/* 極速入庫表單 */}
                     <form onSubmit={handleQuickInboundToWarehouse} className="bg-slate-950/90 border border-cyan-400/40 rounded-xl p-4 space-y-3">
                       <div className="flex items-center justify-between">
@@ -1756,7 +1796,7 @@
                         onChange={(e) => setQuickInboundForm({ ...quickInboundForm, name: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
                       />
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         <select
                           value={quickInboundForm.category}
                           onChange={(e) => setQuickInboundForm({ ...quickInboundForm, category: e.target.value })}
@@ -1774,66 +1814,16 @@
                             className="w-full bg-transparent text-white font-bold text-sm text-center focus:outline-none"
                           />
                         </div>
-                      </div>
-
-                      {/* 有效日期選擇：無有效日期 vs 設定天數 */}
-                      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-slate-300">有效日期（選填）</span>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: false }))}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                                !quickInboundForm.hasExpiry
-                                  ? 'bg-cyan-400/20 text-cyan-300 border-cyan-400/60'
-                                  : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
-                              }`}
-                            >
-                              無有效日期
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: true, expiryDays: prev.expiryDays || "7" }))}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                                quickInboundForm.hasExpiry
-                                  ? 'bg-emerald-400/20 text-emerald-300 border-emerald-400/60'
-                                  : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-white'
-                              }`}
-                            >
-                              設定效期天數
-                            </button>
-                          </div>
-                        </div>
-
-                        {quickInboundForm.hasExpiry ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="flex items-center space-x-1.5 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 w-32">
-                              <span className="text-xs text-slate-400">有效</span>
-                              <input
-                                type="number"
-                                min="0"
-                                placeholder="天數"
-                                value={quickInboundForm.expiryDays}
-                                onChange={(e) => setQuickInboundForm({ ...quickInboundForm, expiryDays: e.target.value })}
-                                className="w-full bg-transparent text-emerald-400 font-bold text-sm text-center focus:outline-none"
-                              />
-                              <span className="text-xs text-slate-400">天</span>
-                            </div>
-                            {[7, 30, 90, 365].map(d => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => setQuickInboundForm(prev => ({ ...prev, hasExpiry: true, expiryDays: String(d) }))}
-                                className="text-[11px] px-2 py-1 rounded-md bg-slate-950 text-cyan-400 border border-slate-800 hover:border-cyan-400/50"
-                              >
-                                +{d === 365 ? '1年' : `${d}天`}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-slate-400">
-                            目前設為「無有效日期」，入庫後不會發出過期提醒（若需追蹤可點右側「設定效期天數」）。
+                        {quickInboundForm.category === "食品生鮮" && (
+                          <div className="flex items-center space-x-1 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                            <span className="text-xs text-slate-400">效期天</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={quickInboundForm.expiryDays}
+                              onChange={(e) => setQuickInboundForm({ ...quickInboundForm, expiryDays: e.target.value })}
+                              className="w-full bg-transparent text-emerald-400 font-bold text-sm text-center focus:outline-none"
+                            />
                           </div>
                         )}
                       </div>
@@ -1865,7 +1855,7 @@
                         />
                         <div className="space-y-2">
                           {items
-                            .filter(i => i.location !== activeWarehouse.name && (!transferSearch.trim() || i.name.toLowerCase().includes(transferSearch.toLowerCase()) || i.location.toLowerCase().includes(transferSearch.toLowerCase())))
+                            .filter(i => i.location !== activeWarehouse.name && (!transferSearch.trim() || (i.name || "").toLowerCase().includes(transferSearch.toLowerCase()) || (i.location || "").toLowerCase().includes(transferSearch.toLowerCase())))
                             .slice(0, 12)
                             .map(candidate => (
                               <div key={candidate.id} className="bg-slate-950 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between">
@@ -1874,6 +1864,7 @@
                                   <div className="text-[11px] text-slate-400">原位置：{candidate.location} ｜ 庫存：{candidate.quantity}</div>
                                 </div>
                                 <button
+                                  type="button"
                                   onClick={() => handleTransferInToActiveWarehouse(candidate)}
                                   className="px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-bold text-xs rounded-lg transition"
                                 >
@@ -1888,7 +1879,7 @@
                 )}
 
                 {warehouseHubTab === 'settings' && (
-                  <form onSubmit={handleUpdateWarehouseSettings} className="flex-1 overflow-y-auto space-y-3 pr-1">
+                  <form onSubmit={handleUpdateWarehouseSettings} className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
                     <h4 className="font-bold text-sm text-cyan-400">⚙️ 編輯倉庫與貼紙設定</h4>
                     <div>
                       <label className="block text-xs font-semibold text-slate-300 mb-1">倉庫 / 收納箱名稱 *</label>
@@ -1986,12 +1977,13 @@
                       setEditingItem({
                         nfc_uid: uid,
                         name: "",
+                        barcode: "",
                         category: "食品生鮮",
                         location: warehouses[0]?.name || "未指定倉庫",
                         quantity: 1,
                         notes: "",
                         image_url: "",
-                        expiry_date: null
+                        expiry_date: Date.now() + 7 * ONE_DAY_MS
                       });
                     }}
                     className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-sm border border-slate-700 transition"
@@ -2027,7 +2019,7 @@
 
           {/* 2. 出庫登記 Modal */}
           {checkoutItem && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-[55] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl p-5 shadow-2xl">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <h3 className="font-bold text-base text-white">📦 物品出庫登記</h3>
@@ -2079,7 +2071,7 @@
 
           {/* 3. 轉移倉庫 Modal */}
           {transferItem && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-[55] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-2xl p-5 shadow-2xl">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <h3 className="font-bold text-base text-white">🚚 轉移存放位置</h3>
@@ -2212,14 +2204,14 @@
 
           {/* 5. 新增/編輯物品 Modal */}
           {editingItem && (
-            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-[55] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl p-5 shadow-2xl">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <h3 className="font-bold text-base text-white">{isCreatingNewItem ? '📥 快速入庫 / 新增物品' : '✏️ 編輯物品詳細'}</h3>
                   <button onClick={() => { setEditingItem(null); setIsCreatingNewItem(false); }} className="text-slate-400 hover:text-white">✕</button>
                 </div>
 
-                <form key={editingItem.id || (isCreatingNewItem ? 'new-item' : 'edit-item')} onSubmit={(e) => {
+                <form key={editingItem.id || editingItem.nfc_uid || 'new-item'} onSubmit={(e) => {
                   e.preventDefault();
                   const form = e.target;
                   let parsedExpiry = null;
@@ -2301,14 +2293,14 @@
                           id="has_expiry_checkbox"
                           name="has_expiry"
                           type="checkbox"
-                          defaultChecked={editingItem.expiry_date != null}
+                          defaultChecked={editingItem.expiry_date != null || editingItem.category === '食品生鮮'}
                           onChange={(e) => {
                             const dateInput = document.getElementById('expiry_date_input');
                             if (dateInput) dateInput.disabled = !e.target.checked;
                           }}
                           className="rounded text-cyan-400 focus:ring-0"
                         />
-                        <span>啟用保存期限追蹤（無有效日期請保持不勾選）</span>
+                        <span>啟用保存期限追蹤 (食品/易腐耗材)</span>
                       </label>
                     </div>
 
@@ -2317,30 +2309,13 @@
                         id="expiry_date_input"
                         name="expiry_date"
                         type="date"
-                        disabled={editingItem.expiry_date == null}
-                        defaultValue={
-                          editingItem.expiry_date
-                            ? new Date(editingItem.expiry_date).toISOString().split('T')[0]
-                            : new Date(Date.now() + 7 * ONE_DAY_MS).toISOString().split('T')[0]
-                        }
-                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white disabled:opacity-40"
+                        defaultValue={formatDateInputValue(editingItem.expiry_date, 7)}
+                        className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
                       />
                     </div>
 
                     {/* 快捷天數標籤 */}
                     <div className="flex flex-wrap gap-1 mt-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const cb = document.getElementById('has_expiry_checkbox');
-                          const dateInput = document.getElementById('expiry_date_input');
-                          if (cb) cb.checked = false;
-                          if (dateInput) dateInput.disabled = true;
-                        }}
-                        className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700 hover:border-slate-500"
-                      >
-                        🚫 無有效日期
-                      </button>
                       {[
                         { label: "+3天", days: 3 },
                         { label: "+7天", days: 7 },
@@ -2354,13 +2329,8 @@
                           key={p.label}
                           onClick={() => {
                             const target = new Date(Date.now() + p.days * ONE_DAY_MS).toISOString().split('T')[0];
-                            const dateInput = document.getElementById('expiry_date_input');
-                            const cb = document.getElementById('has_expiry_checkbox');
-                            if (dateInput) {
-                              dateInput.value = target;
-                              dateInput.disabled = false;
-                            }
-                            if (cb) cb.checked = true;
+                            document.getElementById('expiry_date_input').value = target;
+                            document.getElementById('has_expiry_checkbox').checked = true;
                           }}
                           className="text-[10px] px-2 py-0.5 rounded bg-slate-900 text-cyan-400 border border-slate-800 hover:border-cyan-400/50"
                         >
@@ -2563,8 +2533,8 @@
                       try {
                         const txt = document.getElementById('backup_json_area').value;
                         const parsed = JSON.parse(txt);
-                        if (parsed.warehouses) setWarehouses(parsed.warehouses);
-                        if (parsed.items) setItems(parsed.items);
+                        if (Array.isArray(parsed.warehouses)) setWarehouses(parsed.warehouses.filter(Boolean));
+                        if (Array.isArray(parsed.items)) setItems(parsed.items.filter(Boolean));
                         showToast("已成功匯入還原資料！");
                         setShowBackupModal(false);
                       } catch (e) {

@@ -54,6 +54,94 @@
 <body class="bg-[#090D16] text-slate-100 min-h-screen font-sans antialiased selection:bg-cyan-500 selection:text-black">
   <div id="root"></div>
 
+  <!-- Firebase Modular Web SDK (與 Android App 共用同一個 Firebase 專案與 Cloud Firestore 資料庫) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+    import {
+      getAuth,
+      GoogleAuthProvider,
+      signInWithPopup,
+      signInWithRedirect,
+      getRedirectResult,
+      signOut,
+      onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+    import {
+      getFirestore,
+      collection,
+      doc,
+      getDoc,
+      getDocs,
+      setDoc,
+      updateDoc,
+      deleteDoc,
+      onSnapshot,
+      writeBatch,
+      query,
+      limit,
+      serverTimestamp,
+      deleteField
+    } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+
+    const FIRESTORE_DATABASE_ID = "ai-studio-android-nfcsmart-76c95939-f497-400f-9605-404d2ec78463";
+    let customAppId = "";
+    try {
+      customAppId = (localStorage.getItem("nfc_firebase_web_app_id") || "").trim();
+    } catch (_) {}
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDIN0jyOu3pQe5rka9K7JEW7wL51PVmET0",
+      authDomain: "gen-lang-client-0822984965.firebaseapp.com",
+      projectId: "gen-lang-client-0822984965",
+      storageBucket: "gen-lang-client-0822984965.firebasestorage.app",
+      messagingSenderId: "630304638507",
+      appId: customAppId || "1:630304638507:web:nfcsmartinventory"
+    };
+
+    try {
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app, FIRESTORE_DATABASE_ID);
+      const googleProvider = new GoogleAuthProvider();
+      googleProvider.setCustomParameters({ prompt: "select_account" });
+
+      getRedirectResult(auth).catch((err) => {
+        console.warn("Firebase redirect sign-in notice:", err?.code || err?.message);
+        window.__NFC_FIREBASE_INIT_ERROR__ = err?.code || err?.message || "";
+      });
+
+      window.__NFC_FIREBASE__ = {
+        app,
+        auth,
+        db,
+        databaseId: FIRESTORE_DATABASE_ID,
+        projectId: firebaseConfig.projectId,
+        googleProvider,
+        signInWithPopup,
+        signInWithRedirect,
+        signOut,
+        onAuthStateChanged,
+        collection,
+        doc,
+        getDoc,
+        getDocs,
+        setDoc,
+        updateDoc,
+        deleteDoc,
+        onSnapshot,
+        writeBatch,
+        query,
+        limit,
+        serverTimestamp,
+        deleteField
+      };
+    } catch (err) {
+      console.error("Firebase Web SDK init error:", err);
+      window.__NFC_FIREBASE_INIT_ERROR__ = err?.message || String(err);
+    }
+    window.dispatchEvent(new Event("nfc-firebase-ready"));
+  </script>
+
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
@@ -319,6 +407,220 @@
         }
       }
       return new Date(Date.now() + fallbackDays * ONE_DAY_MS).toISOString().split('T')[0];
+    }
+
+    // --- Firebase Firestore 與 Android Schema 雙向轉換輔助 ---
+    const ICON_KEY_TO_EMOJI = {
+      fridge: "🧊",
+      freezer: "❄️",
+      box: "📦",
+      tool: "🧰",
+      closet: "🧥",
+      camp: "⛺",
+      vault: "🔐"
+    };
+    const EMOJI_TO_ICON_KEY = {
+      "🧊": "fridge",
+      "❄️": "freezer",
+      "📦": "box",
+      "🧰": "tool",
+      "🧥": "closet",
+      "⛺": "camp",
+      "🔐": "vault"
+    };
+
+    function toWebIcon(icon) {
+      if (!icon) return "📦";
+      return ICON_KEY_TO_EMOJI[icon] || icon;
+    }
+
+    function toCloudIcon(icon) {
+      if (!icon) return "box";
+      return (EMOJI_TO_ICON_KEY[icon] || String(icon)).slice(0, 20) || "box";
+    }
+
+    function sanitizeFirestoreId(rawId, prefix = "doc") {
+      const cleaned = String(rawId || "")
+        .trim()
+        .replace(/[^a-zA-Z0-9_\-]/g, "_")
+        .slice(0, 128);
+      if (cleaned && /^[a-zA-Z0-9_\-]+$/.test(cleaned)) return cleaned;
+      return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    }
+
+    function timestampToIso(ts) {
+      if (!ts) return new Date().toISOString();
+      if (typeof ts.toDate === "function") return ts.toDate().toISOString();
+      if (typeof ts.seconds === "number") return new Date(ts.seconds * 1000).toISOString();
+      const d = new Date(ts);
+      return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+
+    function cloudDocToWarehouse(docSnap) {
+      const d = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        nfc_uid: d.nfcUid || null,
+        name: d.name || "未命名倉庫",
+        icon: toWebIcon(d.icon),
+        description: d.description || "",
+        updated_at: timestampToIso(d.updatedAt)
+      };
+    }
+
+    function cloudDocToItem(docSnap) {
+      const d = docSnap.data() || {};
+      return {
+        id: docSnap.id,
+        nfc_uid: d.nfcUid || null,
+        barcode: d.barcode || "",
+        name: d.name || "未命名物品",
+        category: d.category || "生活雜物",
+        location: d.location || "未指定倉庫",
+        quantity: typeof d.quantity === "number" ? d.quantity : 0,
+        notes: d.notes || "",
+        image_url: d.imageUrl || "",
+        expiry_date: typeof d.expiryDate === "number" ? d.expiryDate : null,
+        updated_at: timestampToIso(d.updatedAt)
+      };
+    }
+
+    function buildWarehouseCreatePayload(fb, uid, wh) {
+      const payload = {
+        userId: uid,
+        name: (String(wh.name || "未命名倉庫").trim() || "未命名倉庫").slice(0, 100),
+        icon: toCloudIcon(wh.icon),
+        description: String(wh.description || "").trim().slice(0, 500),
+        createdAt: fb.serverTimestamp(),
+        updatedAt: fb.serverTimestamp()
+      };
+      const cleanUid = wh.nfc_uid ? String(wh.nfc_uid).trim().toUpperCase().slice(0, 64) : "";
+      if (cleanUid) payload.nfcUid = cleanUid;
+      return payload;
+    }
+
+    function buildWarehouseUpdatePayload(fb, wh) {
+      const cleanUid = wh.nfc_uid ? String(wh.nfc_uid).trim().toUpperCase().slice(0, 64) : "";
+      return {
+        name: (String(wh.name || "未命名倉庫").trim() || "未命名倉庫").slice(0, 100),
+        icon: toCloudIcon(wh.icon),
+        description: String(wh.description || "").trim().slice(0, 500),
+        nfcUid: cleanUid ? cleanUid : fb.deleteField(),
+        updatedAt: fb.serverTimestamp()
+      };
+    }
+
+    function buildItemCreatePayload(fb, uid, item) {
+      const qtyNum = Math.trunc(Number(item.quantity));
+      const safeQty = Number.isNaN(qtyNum) ? 0 : Math.max(0, Math.min(1000000, qtyNum));
+      const payload = {
+        userId: uid,
+        name: (String(item.name || "未命名物品").trim() || "未命名物品").slice(0, 150),
+        category: (String(item.category || "生活雜物").trim() || "生活雜物").slice(0, 60),
+        location: (String(item.location || "未指定倉庫").trim() || "未指定倉庫").slice(0, 120),
+        quantity: safeQty,
+        notes: String(item.notes || "").slice(0, 4000),
+        imageUrl: String(item.image_url || "").trim().slice(0, 1000),
+        createdAt: fb.serverTimestamp(),
+        updatedAt: fb.serverTimestamp()
+      };
+      const cleanUid = item.nfc_uid ? String(item.nfc_uid).trim().toUpperCase().slice(0, 64) : "";
+      if (cleanUid) payload.nfcUid = cleanUid;
+      const cleanBarcode = item.barcode ? String(item.barcode).trim().slice(0, 128) : "";
+      if (cleanBarcode) payload.barcode = cleanBarcode;
+      if (item.expiry_date !== null && item.expiry_date !== undefined && item.expiry_date !== "") {
+        const expInt = Math.trunc(Number(item.expiry_date));
+        if (!Number.isNaN(expInt) && expInt >= 0) payload.expiryDate = expInt;
+      }
+      return payload;
+    }
+
+    function buildItemUpdatePayload(fb, item) {
+      const qtyNum = Math.trunc(Number(item.quantity));
+      const safeQty = Number.isNaN(qtyNum) ? 0 : Math.max(0, Math.min(1000000, qtyNum));
+      const cleanUid = item.nfc_uid ? String(item.nfc_uid).trim().toUpperCase().slice(0, 64) : "";
+      const cleanBarcode = item.barcode ? String(item.barcode).trim().slice(0, 128) : "";
+      let expiryField = fb.deleteField();
+      if (item.expiry_date !== null && item.expiry_date !== undefined && item.expiry_date !== "") {
+        const expInt = Math.trunc(Number(item.expiry_date));
+        if (!Number.isNaN(expInt) && expInt >= 0) expiryField = expInt;
+      }
+      return {
+        name: (String(item.name || "未命名物品").trim() || "未命名物品").slice(0, 150),
+        category: (String(item.category || "生活雜物").trim() || "生活雜物").slice(0, 60),
+        location: (String(item.location || "未指定倉庫").trim() || "未指定倉庫").slice(0, 120),
+        quantity: safeQty,
+        notes: String(item.notes || "").slice(0, 4000),
+        imageUrl: String(item.image_url || "").trim().slice(0, 1000),
+        nfcUid: cleanUid ? cleanUid : fb.deleteField(),
+        barcode: cleanBarcode ? cleanBarcode : fb.deleteField(),
+        expiryDate: expiryField,
+        updatedAt: fb.serverTimestamp()
+      };
+    }
+
+    async function commitChunkedBatch(fb, operations) {
+      if (!operations || operations.length === 0) return;
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+        const chunk = operations.slice(i, i + CHUNK_SIZE);
+        const batch = fb.writeBatch(fb.db);
+        for (const op of chunk) {
+          if (op.type === "set") batch.set(op.ref, op.data);
+          else if (op.type === "update") batch.update(op.ref, op.data);
+          else if (op.type === "delete") batch.delete(op.ref);
+        }
+        await batch.commit();
+      }
+    }
+
+    async function ensureCloudProfileAndSeed(fb, user) {
+      const uid = user.uid;
+      const userRef = fb.doc(fb.db, "users", uid);
+      const displayName = (user.displayName || "").trim().slice(0, 100) ||
+        ((user.email || "").split("@")[0] || "").slice(0, 100) ||
+        "智慧倉庫用戶";
+      const email = (user.email || "").trim().slice(0, 254);
+      const photoUrl = (user.photoURL || "").trim().slice(0, 900);
+
+      const snap = await fb.getDoc(userRef);
+      if (!snap.exists()) {
+        const createPayload = {
+          userId: uid,
+          displayName,
+          createdAt: fb.serverTimestamp(),
+          updatedAt: fb.serverTimestamp()
+        };
+        if (email) createPayload.email = email;
+        if (photoUrl) createPayload.photoUrl = photoUrl;
+        await fb.setDoc(userRef, createPayload);
+
+        const existingWh = await fb.getDocs(
+          fb.query(fb.collection(fb.db, "users", uid, "warehouses"), fb.limit(1))
+        );
+        if (existingWh.empty) {
+          const ops = [
+            ...INITIAL_WAREHOUSES.map(w => ({
+              type: "set",
+              ref: fb.doc(fb.db, "users", uid, "warehouses", sanitizeFirestoreId(w.id, "wh")),
+              data: buildWarehouseCreatePayload(fb, uid, w)
+            })),
+            ...INITIAL_ITEMS.map(it => ({
+              type: "set",
+              ref: fb.doc(fb.db, "users", uid, "items", sanitizeFirestoreId(it.id, "item")),
+              data: buildItemCreatePayload(fb, uid, it)
+            }))
+          ];
+          await commitChunkedBatch(fb, ops);
+        }
+      } else {
+        await fb.updateDoc(userRef, {
+          displayName,
+          email: email ? email : fb.deleteField(),
+          photoUrl: photoUrl ? photoUrl : fb.deleteField(),
+          updatedAt: fb.serverTimestamp()
+        });
+      }
     }
 
     // --- 商品條碼掃描組件 (支援相機 BarcodeDetector + 手動 / 模擬輸入) ---
@@ -650,22 +952,214 @@
         }
       }, [activeWarehouse?.id]);
 
-      // 保存至當前帳號對應的 localStorage
+      // 雲端同步 (Firebase Auth + Cloud Firestore) 狀態
+      const [fbReady, setFbReady] = useState(() => Boolean(window.__NFC_FIREBASE__));
+      const [cloudUser, setCloudUser] = useState(null);
+      const [cloudSyncStatus, setCloudSyncStatus] = useState("idle"); // 'idle' | 'connecting' | 'synced' | 'error'
+      const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
+      const [cloudErrorMsg, setCloudErrorMsg] = useState("");
+      const [unauthorizedDomainHint, setUnauthorizedDomainHint] = useState(false);
+
+      // 保存至當前帳號對應的 localStorage (雲端登入時不覆蓋本機資料)
       useEffect(() => {
+        if (cloudUser) return;
         if (loadedAccountRef.current !== activeAccount.id) return;
         try {
           const keys = getAccountStorageKeys(activeAccount.id);
           localStorage.setItem(keys.warehouses, JSON.stringify(warehouses));
         } catch (_) {}
-      }, [warehouses, activeAccount.id]);
+      }, [warehouses, activeAccount.id, cloudUser]);
 
       useEffect(() => {
+        if (cloudUser) return;
         if (loadedAccountRef.current !== activeAccount.id) return;
         try {
           const keys = getAccountStorageKeys(activeAccount.id);
           localStorage.setItem(keys.items, JSON.stringify(items));
         } catch (_) {}
-      }, [items, activeAccount.id]);
+      }, [items, activeAccount.id, cloudUser]);
+
+      // 監聽 Firebase SDK 就緒與 Google 登入狀態
+      useEffect(() => {
+        const onReady = () => setFbReady(Boolean(window.__NFC_FIREBASE__));
+        window.addEventListener("nfc-firebase-ready", onReady);
+        return () => window.removeEventListener("nfc-firebase-ready", onReady);
+      }, []);
+
+      useEffect(() => {
+        const fb = window.__NFC_FIREBASE__;
+        if (!fb) return;
+
+        let unsubWh = null;
+        let unsubItems = null;
+        let activeUid = null;
+
+        const clearListeners = () => {
+          if (unsubWh) { unsubWh(); unsubWh = null; }
+          if (unsubItems) { unsubItems(); unsubItems = null; }
+        };
+
+        const unsubAuth = fb.onAuthStateChanged(fb.auth, async (user) => {
+          clearListeners();
+          if (!user) {
+            activeUid = null;
+            setCloudUser(null);
+            setCloudSyncStatus("idle");
+            setCloudErrorMsg("");
+            const { loadedWh, loadedItems } = loadAccountData(activeAccount.id);
+            loadedAccountRef.current = activeAccount.id;
+            setWarehouses(loadedWh);
+            setItems(loadedItems);
+            setActiveWarehouse(null);
+            return;
+          }
+
+          activeUid = user.uid;
+          setCloudUser({
+            uid: user.uid,
+            displayName: user.displayName || (user.email ? user.email.split("@")[0] : "Google 用戶"),
+            email: user.email || "",
+            photoURL: user.photoURL || ""
+          });
+          setCloudSyncStatus("connecting");
+          setCloudErrorMsg("");
+          setUnauthorizedDomainHint(false);
+
+          try {
+            await ensureCloudProfileAndSeed(fb, user);
+          } catch (err) {
+            console.error("ensureCloudProfileAndSeed error:", err);
+            if (activeUid === user.uid) {
+              setCloudSyncStatus("error");
+              setCloudErrorMsg(err?.message || "無法初始化雲端資料");
+            }
+          }
+
+          if (activeUid !== user.uid) return;
+
+          unsubWh = fb.onSnapshot(
+            fb.collection(fb.db, "users", user.uid, "warehouses"),
+            (snapshot) => {
+              const list = snapshot.docs.map(cloudDocToWarehouse);
+              list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+              setWarehouses(list);
+              setCloudSyncStatus("synced");
+            },
+            (err) => {
+              if (fb.auth.currentUser?.uid === user.uid) {
+                console.error("Warehouses snapshot error:", err);
+                setCloudSyncStatus("error");
+                setCloudErrorMsg(err?.message || "讀取雲端倉庫失敗");
+              }
+            }
+          );
+
+          unsubItems = fb.onSnapshot(
+            fb.collection(fb.db, "users", user.uid, "items"),
+            (snapshot) => {
+              const list = snapshot.docs.map(cloudDocToItem);
+              list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+              setItems(list);
+              setCloudSyncStatus("synced");
+            },
+            (err) => {
+              if (fb.auth.currentUser?.uid === user.uid) {
+                console.error("Items snapshot error:", err);
+                setCloudSyncStatus("error");
+                setCloudErrorMsg(err?.message || "讀取雲端物品失敗");
+              }
+            }
+          );
+        });
+
+        return () => {
+          clearListeners();
+          unsubAuth();
+        };
+      }, [fbReady]);
+
+      const handleGoogleSignIn = async () => {
+        const fb = window.__NFC_FIREBASE__;
+        if (!fb) {
+          showToast("⚠️ Firebase 雲端模組尚未載入，請檢查網路後重試");
+          return;
+        }
+        setCloudAuthBusy(true);
+        setCloudErrorMsg("");
+        setUnauthorizedDomainHint(false);
+        try {
+          await fb.signInWithPopup(fb.auth, fb.googleProvider);
+          setShowAccountModal(false);
+          showToast("☁️ 已登入 Google 帳號並開啟即時雲端同步！");
+        } catch (err) {
+          const code = err?.code || "";
+          if (code === "auth/unauthorized-domain") {
+            setUnauthorizedDomainHint(true);
+            setCloudErrorMsg(`網域 ${window.location.hostname || "kailin12345.github.io"} 尚未加入 Firebase 授權網域白名單`);
+          } else if (code === "auth/popup-blocked") {
+            try {
+              await fb.signInWithRedirect(fb.auth, fb.googleProvider);
+              return;
+            } catch (redirErr) {
+              setCloudErrorMsg(redirErr?.message || "無法開啟 Google 登入視窗");
+            }
+          } else if (code !== "auth/popup-closed-by-user" && code !== "auth/cancelled-popup-request") {
+            setCloudErrorMsg(err?.message || "Google 登入失敗");
+          }
+        } finally {
+          setCloudAuthBusy(false);
+        }
+      };
+
+      const handleGoogleSignOut = async () => {
+        const fb = window.__NFC_FIREBASE__;
+        if (!fb) return;
+        setCloudAuthBusy(true);
+        try {
+          await fb.signOut(fb.auth);
+          setShowAccountModal(false);
+          showToast("👤 已登出 Google 雲端帳號，切換回本機模式");
+        } catch (err) {
+          showToast("⚠️ 登出失敗：" + (err?.message || ""));
+        } finally {
+          setCloudAuthBusy(false);
+        }
+      };
+
+      const handleUploadLocalToCloud = async () => {
+        const fb = window.__NFC_FIREBASE__;
+        if (!fb || !cloudUser) return;
+        const { loadedWh, loadedItems } = loadAccountData(activeAccount.id);
+        if (loadedWh.length === 0 && loadedItems.length === 0) {
+          showToast("目前本機帳號沒有資料可上傳");
+          return;
+        }
+        if (!confirm(`確定要將本機帳號「${activeAccount.name}」的 ${loadedWh.length} 個倉庫與 ${loadedItems.length} 項物品合併上傳至您的 Google 雲端倉庫嗎？`)) {
+          return;
+        }
+        setCloudAuthBusy(true);
+        try {
+          const ops = [
+            ...loadedWh.map(w => ({
+              type: "set",
+              ref: fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(w.id, "wh")),
+              data: buildWarehouseCreatePayload(fb, cloudUser.uid, w)
+            })),
+            ...loadedItems.map(it => ({
+              type: "set",
+              ref: fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(it.id, "item")),
+              data: buildItemCreatePayload(fb, cloudUser.uid, it)
+            }))
+          ];
+          await commitChunkedBatch(fb, ops);
+          showToast(`☁️ 已成功將 ${loadedWh.length} 個倉庫與 ${loadedItems.length} 項物品同步至雲端！`);
+        } catch (err) {
+          console.error("Upload local to cloud failed:", err);
+          alert("上傳失敗：" + (err?.message || String(err)));
+        } finally {
+          setCloudAuthBusy(false);
+        }
+      };
 
       const switchToAccount = (accountId) => {
         const target = accounts.find(a => a.id === accountId);
@@ -703,13 +1197,17 @@
         loadedAccountRef.current = newId;
         setAccounts(prev => [...prev, newAcc]);
         setActiveAccountId(newId);
-        setWarehouses(initialWh);
-        setItems(initialIt);
-        setActiveWarehouse(null);
-        setEditingItem(null);
         setNewAccountForm({ name: "", email: "", seedSample: true });
-        setShowAccountModal(false);
-        showToast(`✅ 已建立並切換至新帳號「${name}」`);
+        if (!cloudUser) {
+          setWarehouses(initialWh);
+          setItems(initialIt);
+          setActiveWarehouse(null);
+          setEditingItem(null);
+          setShowAccountModal(false);
+          showToast(`✅ 已建立並切換至新帳號「${name}」`);
+        } else {
+          showToast(`✅ 已建立本機帳號「${name}」（目前仍維持 Google 雲端同步模式）`);
+        }
       };
 
       const handleDeleteAccount = (accountId) => {
@@ -729,11 +1227,13 @@
           const { loadedWh, loadedItems } = loadAccountData(nextAcc.id);
           loadedAccountRef.current = nextAcc.id;
           setActiveAccountId(nextAcc.id);
-          setWarehouses(loadedWh);
-          setItems(loadedItems);
-          setActiveWarehouse(null);
+          if (!cloudUser) {
+            setWarehouses(loadedWh);
+            setItems(loadedItems);
+            setActiveWarehouse(null);
+          }
         }
-        showToast(`🗑️ 已刪除帳號「${target.name}」`);
+        showToast(`🗑️ 已刪除本機帳號「${target.name}」`);
       };
 
       const showToast = (msg) => {
@@ -921,7 +1421,34 @@
       };
 
       // 物品 CRUD 操作
-      const handleSaveItem = (itemData) => {
+      const handleSaveItem = async (itemData) => {
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            if (isCreatingNewItem) {
+              const newId = sanitizeFirestoreId(`item_${Date.now()}`, "item");
+              await fb.setDoc(
+                fb.doc(fb.db, "users", cloudUser.uid, "items", newId),
+                buildItemCreatePayload(fb, cloudUser.uid, itemData)
+              );
+              showToast(`☁️ 【入庫成功】已同步新增「${itemData.name}」`);
+            } else {
+              const targetId = sanitizeFirestoreId(itemData.id, "item");
+              await fb.updateDoc(
+                fb.doc(fb.db, "users", cloudUser.uid, "items", targetId),
+                buildItemUpdatePayload(fb, itemData)
+              );
+              showToast(`☁️ 已雲端更新「${itemData.name}」`);
+            }
+            setEditingItem(null);
+            setIsCreatingNewItem(false);
+          } catch (err) {
+            console.error("Cloud save item failed:", err);
+            alert("雲端儲存失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         const nowStr = new Date().toISOString();
         if (isCreatingNewItem) {
           const newItem = {
@@ -939,13 +1466,41 @@
         setIsCreatingNewItem(false);
       };
 
-      const handleDeleteItem = (itemId) => {
+      const handleDeleteItem = async (itemId) => {
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            await fb.deleteDoc(fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(itemId, "item")));
+            setEditingItem(null);
+            showToast("☁️ 已從雲端刪除該物品");
+          } catch (err) {
+            console.error("Cloud delete item failed:", err);
+            alert("雲端刪除失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
         setItems(prev => prev.filter(i => i.id !== itemId));
         setEditingItem(null);
         showToast("已刪除該物品");
       };
 
-      const handleAdjustQuantity = (itemId, delta) => {
+      const handleAdjustQuantity = async (itemId, delta) => {
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          const target = items.find(it => it.id === itemId);
+          if (!target) return;
+          const newQty = Math.max(0, Math.min(1000000, Math.trunc(Number(target.quantity || 0) + delta)));
+          try {
+            await fb.updateDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(itemId, "item")),
+              { quantity: newQty, updatedAt: fb.serverTimestamp() }
+            );
+          } catch (err) {
+            console.error("Cloud adjust quantity failed:", err);
+            showToast("⚠️ 雲端更新數量失敗");
+          }
+          return;
+        }
         setItems(prev => prev.map(it => {
           if (it.id === itemId) {
             const newQty = Math.max(0, (it.quantity || 0) + delta);
@@ -956,15 +1511,34 @@
       };
 
       // 出庫確認
-      const handleConfirmCheckout = (item, qty, reason) => {
+      const handleConfirmCheckout = async (item, qty, reason) => {
         const timeStr = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
         const log = `\n[出庫紀錄 ${timeStr}] 出庫 ${qty} 件` + (reason ? `（用途：${reason}）` : '');
+        const newQty = Math.max(0, Math.min(1000000, Math.trunc(Number(item.quantity || 0) - qty)));
+        const newNotes = ((item.notes || '') + log).slice(0, 4000);
+
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            await fb.updateDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(item.id, "item")),
+              { quantity: newQty, notes: newNotes, updatedAt: fb.serverTimestamp() }
+            );
+            showToast(`☁️ 【出庫成功】已領出 ${qty} 件「${item.name}」`);
+            setCheckoutItem(null);
+          } catch (err) {
+            console.error("Cloud checkout failed:", err);
+            alert("雲端出庫更新失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setItems(prev => prev.map(it => {
           if (it.id === item.id) {
             return {
               ...it,
-              quantity: Math.max(0, (it.quantity || 0) - qty),
-              notes: (it.notes || '') + log,
+              quantity: newQty,
+              notes: newNotes,
               updated_at: new Date().toISOString()
             };
           }
@@ -975,26 +1549,64 @@
       };
 
       // 轉移確認
-      const handleConfirmTransfer = (item, newLoc, note) => {
+      const handleConfirmTransfer = async (item, newLoc, note) => {
         const timeStr = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
         const log = `\n[轉移紀錄 ${timeStr}] 從「${item.location}」轉移至「${newLoc}」` + (note ? `（${note}）` : '');
+        const cleanLoc = String(newLoc || "").trim().slice(0, 120) || "未指定倉庫";
+        const newNotes = ((item.notes || '') + log).slice(0, 4000);
+
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            await fb.updateDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(item.id, "item")),
+              { location: cleanLoc, notes: newNotes, updatedAt: fb.serverTimestamp() }
+            );
+            showToast(`☁️ 【轉移成功】已將「${item.name}」轉移至「${cleanLoc}」`);
+            setTransferItem(null);
+          } catch (err) {
+            console.error("Cloud transfer failed:", err);
+            alert("雲端轉移失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setItems(prev => prev.map(it => {
           if (it.id === item.id) {
             return {
               ...it,
-              location: newLoc,
-              notes: (it.notes || '') + log,
+              location: cleanLoc,
+              notes: newNotes,
               updated_at: new Date().toISOString()
             };
           }
           return it;
         }));
-        showToast(`【轉移成功】已將「${item.name}」轉移至「${newLoc}」`);
+        showToast(`【轉移成功】已將「${item.name}」轉移至「${cleanLoc}」`);
         setTransferItem(null);
       };
 
       // 建立倉庫
-      const handleCreateWarehouse = (whData) => {
+      const handleCreateWarehouse = async (whData) => {
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          const newId = sanitizeFirestoreId(`wh_${Date.now()}`, "wh");
+          const newWh = { ...whData, id: newId, updated_at: new Date().toISOString() };
+          try {
+            await fb.setDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "warehouses", newId),
+              buildWarehouseCreatePayload(fb, cloudUser.uid, newWh)
+            );
+            setShowCreateWarehouseModal(false);
+            setActiveWarehouse(newWh);
+            showToast(`☁️ 已建立雲端倉庫「${newWh.name}」！`);
+          } catch (err) {
+            console.error("Cloud create warehouse failed:", err);
+            alert("建立雲端倉庫失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         const newWh = {
           ...whData,
           id: 'wh-' + Date.now(),
@@ -1007,11 +1619,11 @@
       };
 
       // 更新倉庫設定（若更名會自動同步更新倉內物品位置）
-      const handleUpdateWarehouseSettings = (e) => {
+      const handleUpdateWarehouseSettings = async (e) => {
         e.preventDefault();
         if (!activeWarehouse || !warehouseEditForm.name.trim()) return;
         const oldName = activeWarehouse.name;
-        const newName = warehouseEditForm.name.trim();
+        const newName = warehouseEditForm.name.trim().slice(0, 100);
         const updatedWh = {
           ...activeWarehouse,
           name: newName,
@@ -1020,6 +1632,35 @@
           description: warehouseEditForm.description.trim(),
           updated_at: new Date().toISOString()
         };
+
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            const ops = [{
+              type: "update",
+              ref: fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(activeWarehouse.id, "wh")),
+              data: buildWarehouseUpdatePayload(fb, updatedWh)
+            }];
+            if (oldName !== newName) {
+              items.filter(it => it.location === oldName).forEach(it => {
+                ops.push({
+                  type: "update",
+                  ref: fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(it.id, "item")),
+                  data: { location: newName, updatedAt: fb.serverTimestamp() }
+                });
+              });
+            }
+            await commitChunkedBatch(fb, ops);
+            setActiveWarehouse(updatedWh);
+            setWarehouseHubTab('inventory');
+            showToast(`☁️ 已雲端更新倉庫「${updatedWh.name}」設定！`);
+          } catch (err) {
+            console.error("Cloud update warehouse failed:", err);
+            alert("更新雲端倉庫設定失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setWarehouses(prev => prev.map(w => w.id === activeWarehouse.id ? updatedWh : w));
         if (oldName !== newName) {
           setItems(prev => prev.map(it => it.location === oldName ? { ...it, location: newName, updated_at: new Date().toISOString() } : it));
@@ -1030,9 +1671,26 @@
       };
 
       // 綁定新掃到的貼紙到現有倉庫並立即打開出入庫看板
-      const handleBindTagToExistingWarehouse = (uid, wh) => {
-        const cleanUid = uid.trim().toUpperCase();
+      const handleBindTagToExistingWarehouse = async (uid, wh) => {
+        const cleanUid = uid.trim().toUpperCase().slice(0, 64);
         const updatedWh = { ...wh, nfc_uid: cleanUid, updated_at: new Date().toISOString() };
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            await fb.updateDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(wh.id, "wh")),
+              { nfcUid: cleanUid, updatedAt: fb.serverTimestamp() }
+            );
+            setUnboundUidChoice(null);
+            setActiveWarehouse(updatedWh);
+            showToast(`☁️ 已將貼紙 (${cleanUid}) 雲端綁定至「${updatedWh.name}」！`);
+          } catch (err) {
+            console.error("Cloud bind tag failed:", err);
+            alert("綁定雲端貼紙失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setWarehouses(prev => prev.map(w => w.id === wh.id ? updatedWh : w));
         setUnboundUidChoice(null);
         setActiveWarehouse(updatedWh);
@@ -1040,7 +1698,7 @@
       };
 
       // 倉庫內極速入庫
-      const handleQuickInboundToWarehouse = (e) => {
+      const handleQuickInboundToWarehouse = async (e) => {
         e.preventDefault();
         if (!activeWarehouse || !quickInboundForm.name.trim()) return;
         const qty = Math.max(1, parseInt(quickInboundForm.quantity) || 1);
@@ -1061,6 +1719,25 @@
           expiry_date: expiryDate,
           updated_at: new Date().toISOString()
         };
+
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            const newId = sanitizeFirestoreId(`item_${Date.now()}`, "item");
+            await fb.setDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "items", newId),
+              buildItemCreatePayload(fb, cloudUser.uid, newItem)
+            );
+            setQuickInboundForm({ name: "", barcode: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
+            setWarehouseHubTab('inventory');
+            showToast(`☁️ 【快速入庫】已將 ${qty} 件「${newItem.name}」同步放入「${activeWarehouse.name}」`);
+          } catch (err) {
+            console.error("Cloud quick inbound failed:", err);
+            alert("快速入庫失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setItems(prev => [newItem, ...prev]);
         setQuickInboundForm({ name: "", barcode: "", category: "食品生鮮", quantity: 1, expiryDays: "7", notes: "" });
         setWarehouseHubTab('inventory');
@@ -1068,14 +1745,32 @@
       };
 
       // 將其他倉庫物品一鍵調撥入庫到目前倉庫
-      const handleTransferInToActiveWarehouse = (item) => {
+      const handleTransferInToActiveWarehouse = async (item) => {
         if (!activeWarehouse) return;
         const timeStr = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
         const log = `\n[調撥入庫 ${timeStr}] 從「${item.location}」移入「${activeWarehouse.name}」`;
+        const newNotes = ((item.notes || '') + log).slice(0, 4000);
+
+        const fb = window.__NFC_FIREBASE__;
+        if (cloudUser && fb) {
+          try {
+            await fb.updateDoc(
+              fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(item.id, "item")),
+              { location: activeWarehouse.name, notes: newNotes, updatedAt: fb.serverTimestamp() }
+            );
+            setWarehouseHubTab('inventory');
+            showToast(`☁️ 【調撥入庫】已將「${item.name}」移入「${activeWarehouse.name}」`);
+          } catch (err) {
+            console.error("Cloud transfer-in failed:", err);
+            alert("調撥失敗：" + (err?.message || String(err)));
+          }
+          return;
+        }
+
         setItems(prev => prev.map(it => it.id === item.id ? {
           ...it,
           location: activeWarehouse.name,
-          notes: (it.notes || '') + log,
+          notes: newNotes,
           updated_at: new Date().toISOString()
         } : it));
         setWarehouseHubTab('inventory');
@@ -1083,11 +1778,36 @@
       };
 
       // 刪除倉庫與其中物品
-      const handleDeleteWarehouse = (warehouseId) => {
+      const handleDeleteWarehouse = async (warehouseId) => {
         const wh = warehouses.find(w => w.id === warehouseId);
         if (!wh) return;
-        const count = items.filter(i => i.location === wh.name).length;
-        if (confirm(`確定要刪除倉庫「${wh.name}」嗎？\n該倉庫內目前存有的 ${count} 種物品也將一併刪除。`)) {
+        const contained = items.filter(i => i.location === wh.name);
+        if (confirm(`確定要刪除倉庫「${wh.name}」嗎？\n該倉庫內目前存有的 ${contained.length} 種物品也將一併刪除。`)) {
+          const fb = window.__NFC_FIREBASE__;
+          if (cloudUser && fb) {
+            try {
+              const ops = [
+                {
+                  type: "delete",
+                  ref: fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(warehouseId, "wh"))
+                },
+                ...contained.map(it => ({
+                  type: "delete",
+                  ref: fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(it.id, "item"))
+                }))
+              ];
+              await commitChunkedBatch(fb, ops);
+              if (activeWarehouse && activeWarehouse.id === warehouseId) {
+                setActiveWarehouse(null);
+              }
+              showToast(`☁️ 已從雲端刪除倉庫「${wh.name}」及其中所有物品！`);
+            } catch (err) {
+              console.error("Cloud delete warehouse failed:", err);
+              alert("刪除雲端倉庫失敗：" + (err?.message || String(err)));
+            }
+            return;
+          }
+
           setWarehouses(prev => prev.filter(w => w.id !== warehouseId));
           setItems(prev => prev.filter(i => i.location !== wh.name));
           if (activeWarehouse && activeWarehouse.id === warehouseId) {
@@ -1098,8 +1818,30 @@
       };
 
       // 清空所有倉庫與示範物品
-      const handleClearAllData = () => {
-        if (confirm("確定要清空所有倉庫與示範物品資料嗎？\n清空後列表將變成空白，您仍可隨時點擊「🔄」重新載入示範資料。")) {
+      const handleClearAllData = async () => {
+        const scopeLabel = cloudUser ? "【雲端帳號】" : "目前";
+        if (confirm(`確定要清空${scopeLabel}的所有倉庫與物品資料嗎？\n清空後列表將變成空白，您仍可隨時點擊「🔄」重新載入示範資料。`)) {
+          const fb = window.__NFC_FIREBASE__;
+          if (cloudUser && fb) {
+            try {
+              const [whSnap, itSnap] = await Promise.all([
+                fb.getDocs(fb.collection(fb.db, "users", cloudUser.uid, "warehouses")),
+                fb.getDocs(fb.collection(fb.db, "users", cloudUser.uid, "items"))
+              ]);
+              const ops = [
+                ...whSnap.docs.map(d => ({ type: "delete", ref: d.ref })),
+                ...itSnap.docs.map(d => ({ type: "delete", ref: d.ref }))
+              ];
+              await commitChunkedBatch(fb, ops);
+              setActiveWarehouse(null);
+              showToast("☁️ 已清空雲端所有倉庫與物品資料！");
+            } catch (err) {
+              console.error("Cloud clear all failed:", err);
+              alert("清空雲端資料失敗：" + (err?.message || String(err)));
+            }
+            return;
+          }
+
           setWarehouses([]);
           setItems([]);
           setActiveWarehouse(null);
@@ -1107,8 +1849,40 @@
         }
       };
 
-      const handleResetData = () => {
-        if (confirm("確定要重置為預設測試資料嗎？現有變更將被覆蓋。")) {
+      const handleResetData = async () => {
+        const scopeLabel = cloudUser ? "雲端帳號" : "本機帳號";
+        if (confirm(`確定要將${scopeLabel}重置為預設測試資料嗎？現有變更將被覆蓋。`)) {
+          const fb = window.__NFC_FIREBASE__;
+          if (cloudUser && fb) {
+            try {
+              const [whSnap, itSnap] = await Promise.all([
+                fb.getDocs(fb.collection(fb.db, "users", cloudUser.uid, "warehouses")),
+                fb.getDocs(fb.collection(fb.db, "users", cloudUser.uid, "items"))
+              ]);
+              const ops = [
+                ...whSnap.docs.map(d => ({ type: "delete", ref: d.ref })),
+                ...itSnap.docs.map(d => ({ type: "delete", ref: d.ref })),
+                ...INITIAL_WAREHOUSES.map(w => ({
+                  type: "set",
+                  ref: fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(w.id, "wh")),
+                  data: buildWarehouseCreatePayload(fb, cloudUser.uid, w)
+                })),
+                ...INITIAL_ITEMS.map(it => ({
+                  type: "set",
+                  ref: fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(it.id, "item")),
+                  data: buildItemCreatePayload(fb, cloudUser.uid, it)
+                }))
+              ];
+              await commitChunkedBatch(fb, ops);
+              setActiveWarehouse(null);
+              showToast("☁️ 已成功重置雲端預載資料！");
+            } catch (err) {
+              console.error("Cloud reset failed:", err);
+              alert("重置雲端資料失敗：" + (err?.message || String(err)));
+            }
+            return;
+          }
+
           setWarehouses(INITIAL_WAREHOUSES);
           setItems(INITIAL_ITEMS);
           showToast("已成功重置為預載資料！");
@@ -1145,11 +1919,15 @@
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => setShowAccountModal(true)}
-                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-400/30 text-xs font-semibold flex items-center space-x-1 transition"
-                  title="帳號切換與管理"
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 border transition ${
+                    cloudUser
+                      ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-400/50'
+                      : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-400/30'
+                  }`}
+                  title={cloudUser ? `雲端同步中：${cloudUser.displayName}` : "帳號切換與 Google 雲端登入"}
                 >
-                  <span>👤</span>
-                  <span className="max-w-[90px] truncate">{activeAccount.name}</span>
+                  <span>{cloudUser ? '☁️' : '👤'}</span>
+                  <span className="max-w-[90px] truncate">{cloudUser ? cloudUser.displayName : activeAccount.name}</span>
                 </button>
                 <button
                   onClick={() => setShowSimulator(true)}
@@ -2673,16 +3451,37 @@
                     📋 複製到剪貼簿
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       try {
                         const txt = document.getElementById('backup_json_area').value;
                         const parsed = JSON.parse(txt);
-                        if (Array.isArray(parsed.warehouses)) setWarehouses(parsed.warehouses.filter(Boolean));
-                        if (Array.isArray(parsed.items)) setItems(parsed.items.filter(Boolean));
+                        const validWh = Array.isArray(parsed.warehouses) ? parsed.warehouses.filter(Boolean) : [];
+                        const validIt = Array.isArray(parsed.items) ? parsed.items.filter(Boolean) : [];
+                        const fb = window.__NFC_FIREBASE__;
+                        if (cloudUser && fb) {
+                          const ops = [
+                            ...validWh.map(w => ({
+                              type: "set",
+                              ref: fb.doc(fb.db, "users", cloudUser.uid, "warehouses", sanitizeFirestoreId(w.id, "wh")),
+                              data: buildWarehouseCreatePayload(fb, cloudUser.uid, w)
+                            })),
+                            ...validIt.map(it => ({
+                              type: "set",
+                              ref: fb.doc(fb.db, "users", cloudUser.uid, "items", sanitizeFirestoreId(it.id, "item")),
+                              data: buildItemCreatePayload(fb, cloudUser.uid, it)
+                            }))
+                          ];
+                          await commitChunkedBatch(fb, ops);
+                          showToast("☁️ 已成功匯入並同步至雲端！");
+                          setShowBackupModal(false);
+                          return;
+                        }
+                        if (Array.isArray(parsed.warehouses)) setWarehouses(validWh);
+                        if (Array.isArray(parsed.items)) setItems(validIt);
                         showToast("已成功匯入還原資料！");
                         setShowBackupModal(false);
                       } catch (e) {
-                        alert("JSON 格式解析失敗，請確認內容格式！");
+                        alert("匯入失敗，請確認 JSON 格式是否正確：" + (e?.message || ""));
                       }
                     }}
                     className="flex-1 py-2 bg-cyan-400 hover:bg-cyan-300 text-slate-950 rounded-lg text-xs font-bold"
@@ -2736,19 +3535,122 @@
             onDetected={handleBarcodeScanned}
           />
 
-          {/* 10. 帳號切換與管理 Modal */}
+          {/* 10. 帳號切換與 Google 雲端同步管理 Modal */}
           {showAccountModal && (
             <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-900 border border-slate-700 w-full max-w-md max-h-[88vh] overflow-y-auto rounded-2xl p-5 shadow-2xl space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <h3 className="font-bold text-base text-white">👤 帳號管理與切換</h3>
+                  <h3 className="font-bold text-base text-white">☁️ 雲端同步與帳號管理</h3>
                   <button onClick={() => setShowAccountModal(false)} className="text-slate-400 hover:text-white">✕</button>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="text-xs font-semibold text-slate-400">已建立帳號（每個帳號的倉庫與物品完全獨立儲存）：</div>
+                {/* Google Cloud Sync 區塊 */}
+                <div className={`rounded-2xl p-4 border space-y-3 ${
+                  cloudUser ? 'bg-emerald-500/10 border-emerald-400/50' : 'bg-slate-950/90 border-cyan-400/40'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-cyan-300 flex items-center space-x-1.5">
+                      <span>☁️</span>
+                      <span>Google 雲端帳號（與 Android App 即時同步）</span>
+                    </div>
+                    {cloudUser && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40 font-bold">
+                        {cloudSyncStatus === 'synced' ? '● 即時連線中' : cloudSyncStatus === 'connecting' ? '同步中...' : '異常'}
+                      </span>
+                    )}
+                  </div>
+
+                  {cloudUser ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                        {cloudUser.photoURL ? (
+                          <img src={cloudUser.photoURL} alt="avatar" className="w-10 h-10 rounded-full border border-emerald-400/50 object-cover" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-emerald-400/20 text-emerald-300 flex items-center justify-center font-bold">
+                            {cloudUser.displayName.slice(0, 1).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-white truncate">{cloudUser.displayName}</div>
+                          <div className="text-[11px] text-slate-400 truncate">{cloudUser.email}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        <button
+                          type="button"
+                          disabled={cloudAuthBusy}
+                          onClick={handleUploadLocalToCloud}
+                          className="w-full py-2 bg-cyan-400/15 hover:bg-cyan-400/25 text-cyan-300 border border-cyan-400/40 rounded-xl text-xs font-bold transition disabled:opacity-50"
+                        >
+                          ⬆️ 將本機「{activeAccount.name}」資料合併上傳至雲端
+                        </button>
+                        <button
+                          type="button"
+                          disabled={cloudAuthBusy}
+                          onClick={handleGoogleSignOut}
+                          className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition disabled:opacity-50"
+                        >
+                          登出 Google 帳號（切換回本機離線模式）
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        使用與 Android App 相同的 Google 帳號登入，即可透過 Cloud Firestore 即時互通所有倉庫、NFC UID、條碼與物品資料。
+                      </p>
+                      <button
+                        type="button"
+                        disabled={cloudAuthBusy || !fbReady}
+                        onClick={handleGoogleSignIn}
+                        className="w-full py-2.5 bg-white hover:bg-slate-100 text-slate-950 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition shadow disabled:opacity-50"
+                      >
+                        <span>🔐</span>
+                        <span>{cloudAuthBusy ? '正在開啟 Google 登入...' : (!fbReady ? '載入 Firebase 中...' : '使用 Google 帳號登入並同步雲端')}</span>
+                      </button>
+
+                      {cloudErrorMsg && (
+                        <div className="bg-rose-500/15 border border-rose-500/40 rounded-xl p-2.5 text-[11px] text-rose-300 space-y-1.5">
+                          <div className="font-bold">⚠️ {cloudErrorMsg}</div>
+                          {unauthorizedDomainHint && (
+                            <div className="text-[10px] text-slate-300 leading-relaxed space-y-1">
+                              <div>請前往 Firebase 主控台將此網域加入授權白名單（只需設定一次）：</div>
+                              <div className="flex items-center space-x-1.5 bg-slate-950 px-2 py-1 rounded border border-slate-700">
+                                <code className="text-cyan-300 font-mono flex-1 truncate">{window.location.hostname || "kailin12345.github.io"}</code>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard?.writeText(window.location.hostname || "kailin12345.github.io");
+                                    showToast("已複製網域名稱");
+                                  }}
+                                  className="text-cyan-400 font-bold"
+                                >
+                                  複製
+                                </button>
+                              </div>
+                              <a
+                                href="https://console.firebase.google.com/project/gen-lang-client-0822984965/authentication/settings"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block text-cyan-400 underline font-semibold"
+                              >
+                                前往 Firebase Authentication → Settings → Authorized domains ↗
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <div className="text-xs font-semibold text-slate-400">
+                    本機離線帳號（未登入 Google 時使用，各帳號獨立儲存於瀏覽器）：
+                  </div>
                   {accounts.map(acc => {
-                    const isCurrent = acc.id === activeAccount.id;
+                    const isCurrent = !cloudUser && acc.id === activeAccount.id;
                     return (
                       <div
                         key={acc.id}
@@ -2766,7 +3668,7 @@
                           <div className="text-[11px] text-slate-400 truncate mt-0.5">{acc.email}</div>
                         </div>
                         <div className="flex items-center space-x-1.5">
-                          {!isCurrent && (
+                          {!isCurrent && !cloudUser && (
                             <button
                               type="button"
                               onClick={() => switchToAccount(acc.id)}
@@ -2792,7 +3694,7 @@
                 </div>
 
                 <form onSubmit={handleCreateAccount} className="pt-3 border-t border-slate-800 space-y-3">
-                  <h4 className="font-bold text-sm text-cyan-400">➕ 新增獨立帳號</h4>
+                  <h4 className="font-bold text-sm text-cyan-400">➕ 新增本機離線帳號</h4>
                   <input
                     type="text"
                     required

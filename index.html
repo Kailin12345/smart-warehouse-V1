@@ -506,28 +506,73 @@
       );
     }
 
+    const ACCOUNTS_STORAGE_KEY = 'nfc_inventory_accounts_v1';
+    const ACTIVE_ACCOUNT_STORAGE_KEY = 'nfc_inventory_active_account_v1';
+    const DEFAULT_ACCOUNTS = [
+      { id: 'default', name: '預設主帳號', email: 'home@nfc-inventory.local', created_at: new Date().toISOString() }
+    ];
+
+    function getAccountStorageKeys(accountId) {
+      const cleanId = accountId || 'default';
+      if (cleanId === 'default') {
+        return { warehouses: 'nfc_inventory_warehouses', items: 'nfc_inventory_items' };
+      }
+      return {
+        warehouses: `nfc_inventory_acc_${cleanId}_warehouses`,
+        items: `nfc_inventory_acc_${cleanId}_items`
+      };
+    }
+
+    function loadAccountData(accountId) {
+      const keys = getAccountStorageKeys(accountId);
+      let loadedWh = INITIAL_WAREHOUSES;
+      let loadedItems = INITIAL_ITEMS;
+      try {
+        const savedWh = localStorage.getItem(keys.warehouses);
+        if (savedWh !== null) {
+          const parsedWh = JSON.parse(savedWh);
+          if (Array.isArray(parsedWh)) loadedWh = parsedWh.filter(Boolean);
+        }
+      } catch (_) {}
+      try {
+        const savedIt = localStorage.getItem(keys.items);
+        if (savedIt !== null) {
+          const parsedIt = JSON.parse(savedIt);
+          if (Array.isArray(parsedIt)) loadedItems = parsedIt.filter(Boolean);
+        }
+      } catch (_) {}
+      return { loadedWh, loadedItems };
+    }
+
     // --- 主程式 App ---
     function App() {
-      // 狀態管理
-      const [warehouses, setWarehouses] = useState(() => {
+      const [accounts, setAccounts] = useState(() => {
         try {
-          const saved = localStorage.getItem('nfc_inventory_warehouses');
+          const saved = localStorage.getItem(ACCOUNTS_STORAGE_KEY);
           const parsed = saved ? JSON.parse(saved) : null;
-          return Array.isArray(parsed) ? parsed.filter(Boolean) : INITIAL_WAREHOUSES;
+          return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_ACCOUNTS;
         } catch (_) {
-          return INITIAL_WAREHOUSES;
+          return DEFAULT_ACCOUNTS;
         }
       });
 
-      const [items, setItems] = useState(() => {
+      const [activeAccountId, setActiveAccountId] = useState(() => {
         try {
-          const saved = localStorage.getItem('nfc_inventory_items');
-          const parsed = saved ? JSON.parse(saved) : null;
-          return Array.isArray(parsed) ? parsed.filter(Boolean) : INITIAL_ITEMS;
+          return localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY) || 'default';
         } catch (_) {
-          return INITIAL_ITEMS;
+          return 'default';
         }
       });
+
+      const activeAccount = useMemo(() => {
+        return accounts.find(a => a.id === activeAccountId) || accounts[0] || DEFAULT_ACCOUNTS[0];
+      }, [accounts, activeAccountId]);
+
+      const loadedAccountRef = useRef(activeAccount.id);
+
+      // 狀態管理
+      const [warehouses, setWarehouses] = useState(() => loadAccountData(activeAccountId).loadedWh);
+      const [items, setItems] = useState(() => loadAccountData(activeAccountId).loadedItems);
 
       const [currentTab, setCurrentTab] = useState(0); // 0: 物品總清單, 1: 倉庫與收納箱
       const [searchQuery, setSearchQuery] = useState("");
@@ -536,6 +581,8 @@
       const [isCompactView, setIsCompactView] = useState(false);
 
       // 互動彈窗狀態
+      const [showAccountModal, setShowAccountModal] = useState(false);
+      const [newAccountForm, setNewAccountForm] = useState({ name: "", email: "", seedSample: true });
       const [activeWarehouse, setActiveWarehouse] = useState(null); // 當前打開的倉庫看板
       const [warehouseHubTab, setWarehouseHubTab] = useState('inventory'); // 'inventory' | 'inbound' | 'settings'
       const [enableBarcodeInHub, setEnableBarcodeInHub] = useState(() => {
@@ -570,6 +617,18 @@
 
       useEffect(() => {
         try {
+          localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+        } catch (_) {}
+      }, [accounts]);
+
+      useEffect(() => {
+        try {
+          localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, activeAccount.id);
+        } catch (_) {}
+      }, [activeAccount.id]);
+
+      useEffect(() => {
+        try {
           localStorage.setItem('nfc_enable_barcode_scan', enableBarcodeInHub ? 'true' : 'false');
         } catch (_) {}
         if (!enableBarcodeInHub) {
@@ -591,14 +650,91 @@
         }
       }, [activeWarehouse?.id]);
 
-      // 保存至 localStorage
+      // 保存至當前帳號對應的 localStorage
       useEffect(() => {
-        localStorage.setItem('nfc_inventory_warehouses', JSON.stringify(warehouses));
-      }, [warehouses]);
+        if (loadedAccountRef.current !== activeAccount.id) return;
+        try {
+          const keys = getAccountStorageKeys(activeAccount.id);
+          localStorage.setItem(keys.warehouses, JSON.stringify(warehouses));
+        } catch (_) {}
+      }, [warehouses, activeAccount.id]);
 
       useEffect(() => {
-        localStorage.setItem('nfc_inventory_items', JSON.stringify(items));
-      }, [items]);
+        if (loadedAccountRef.current !== activeAccount.id) return;
+        try {
+          const keys = getAccountStorageKeys(activeAccount.id);
+          localStorage.setItem(keys.items, JSON.stringify(items));
+        } catch (_) {}
+      }, [items, activeAccount.id]);
+
+      const switchToAccount = (accountId) => {
+        const target = accounts.find(a => a.id === accountId);
+        if (!target) return;
+        const { loadedWh, loadedItems } = loadAccountData(target.id);
+        loadedAccountRef.current = target.id;
+        setActiveWarehouse(null);
+        setEditingItem(null);
+        setIsCreatingNewItem(false);
+        setCheckoutItem(null);
+        setTransferItem(null);
+        setUnboundUidChoice(null);
+        setScannedBarcodeMatch(null);
+        setActiveAccountId(target.id);
+        setWarehouses(loadedWh);
+        setItems(loadedItems);
+        setShowAccountModal(false);
+        showToast(`👤 已切換帳號：${target.name}`);
+      };
+
+      const handleCreateAccount = (e) => {
+        e.preventDefault();
+        const name = newAccountForm.name.trim();
+        const email = newAccountForm.email.trim() || `${Date.now()}@local`;
+        if (!name) return alert("請輸入帳號名稱");
+        const newId = `u_${Date.now()}`;
+        const newAcc = { id: newId, name, email, created_at: new Date().toISOString() };
+        const initialWh = newAccountForm.seedSample ? INITIAL_WAREHOUSES : [];
+        const initialIt = newAccountForm.seedSample ? INITIAL_ITEMS : [];
+        try {
+          const keys = getAccountStorageKeys(newId);
+          localStorage.setItem(keys.warehouses, JSON.stringify(initialWh));
+          localStorage.setItem(keys.items, JSON.stringify(initialIt));
+        } catch (_) {}
+        loadedAccountRef.current = newId;
+        setAccounts(prev => [...prev, newAcc]);
+        setActiveAccountId(newId);
+        setWarehouses(initialWh);
+        setItems(initialIt);
+        setActiveWarehouse(null);
+        setEditingItem(null);
+        setNewAccountForm({ name: "", email: "", seedSample: true });
+        setShowAccountModal(false);
+        showToast(`✅ 已建立並切換至新帳號「${name}」`);
+      };
+
+      const handleDeleteAccount = (accountId) => {
+        if (accounts.length <= 1) return alert("至少須保留一個帳號！");
+        const target = accounts.find(a => a.id === accountId);
+        if (!target) return;
+        if (!confirm(`確定要刪除帳號「${target.name}」及其所有本機倉庫與物品資料嗎？`)) return;
+        try {
+          const keys = getAccountStorageKeys(accountId);
+          localStorage.removeItem(keys.warehouses);
+          localStorage.removeItem(keys.items);
+        } catch (_) {}
+        const remaining = accounts.filter(a => a.id !== accountId);
+        setAccounts(remaining);
+        if (activeAccount.id === accountId) {
+          const nextAcc = remaining[0];
+          const { loadedWh, loadedItems } = loadAccountData(nextAcc.id);
+          loadedAccountRef.current = nextAcc.id;
+          setActiveAccountId(nextAcc.id);
+          setWarehouses(loadedWh);
+          setItems(loadedItems);
+          setActiveWarehouse(null);
+        }
+        showToast(`🗑️ 已刪除帳號「${target.name}」`);
+      };
 
       const showToast = (msg) => {
         setToastMsg(msg);
@@ -1007,6 +1143,14 @@
 
               {/* 頂部快捷按鈕 */}
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowAccountModal(true)}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-400/30 text-xs font-semibold flex items-center space-x-1 transition"
+                  title="帳號切換與管理"
+                >
+                  <span>👤</span>
+                  <span className="max-w-[90px] truncate">{activeAccount.name}</span>
+                </button>
                 <button
                   onClick={() => setShowSimulator(true)}
                   className="px-3 py-1.5 rounded-lg bg-cyan-400/10 hover:bg-cyan-400/20 text-cyan-400 border border-cyan-400/30 text-xs font-semibold flex items-center space-x-1 transition"
@@ -2591,6 +2735,98 @@
             onClose={() => setBarcodeScannerTarget(null)}
             onDetected={handleBarcodeScanned}
           />
+
+          {/* 10. 帳號切換與管理 Modal */}
+          {showAccountModal && (
+            <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-700 w-full max-w-md max-h-[88vh] overflow-y-auto rounded-2xl p-5 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <h3 className="font-bold text-base text-white">👤 帳號管理與切換</h3>
+                  <button onClick={() => setShowAccountModal(false)} className="text-slate-400 hover:text-white">✕</button>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-slate-400">已建立帳號（每個帳號的倉庫與物品完全獨立儲存）：</div>
+                  {accounts.map(acc => {
+                    const isCurrent = acc.id === activeAccount.id;
+                    return (
+                      <div
+                        key={acc.id}
+                        className={`rounded-xl p-3 border flex items-center justify-between ${
+                          isCurrent ? 'bg-cyan-400/10 border-cyan-400/60' : 'bg-slate-950 border-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1 pr-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-sm text-white truncate">{acc.name}</span>
+                            {isCurrent && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-400 text-slate-950 font-bold">目前使用</span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate mt-0.5">{acc.email}</div>
+                        </div>
+                        <div className="flex items-center space-x-1.5">
+                          {!isCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => switchToAccount(acc.id)}
+                              className="px-2.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-xs font-bold"
+                            >
+                              切換
+                            </button>
+                          )}
+                          {accounts.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAccount(acc.id)}
+                              className="px-2 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 text-xs border border-rose-500/30"
+                              title="刪除帳號"
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <form onSubmit={handleCreateAccount} className="pt-3 border-t border-slate-800 space-y-3">
+                  <h4 className="font-bold text-sm text-cyan-400">➕ 新增獨立帳號</h4>
+                  <input
+                    type="text"
+                    required
+                    placeholder="帳號名稱（例如：公司倉管、媽媽冰箱、露營隊）"
+                    value={newAccountForm.name}
+                    onChange={(e) => setNewAccountForm({ ...newAccountForm, name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white focus:border-cyan-400 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    placeholder="帳號代號或 Email（選填）"
+                    value={newAccountForm.email}
+                    onChange={(e) => setNewAccountForm({ ...newAccountForm, email: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:border-cyan-400 focus:outline-none"
+                  />
+                  <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newAccountForm.seedSample}
+                      onChange={(e) => setNewAccountForm({ ...newAccountForm, seedSample: e.target.checked })}
+                      className="rounded text-cyan-400 focus:ring-0"
+                    />
+                    <span>載入預設範例倉庫與示範物品（取消勾選則從空白倉庫開始）</span>
+                  </label>
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold rounded-xl text-sm transition"
+                  >
+                    建立並切換至此帳號
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
